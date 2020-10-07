@@ -4,7 +4,7 @@ This repo contains all the code, data, visualizations, and reports used in makin
 
 We use PG&E electricity outage data (found [here](https://simonwillison.net/2019/Oct/10/pge-outages/)) and 2018 ACS demographic data - identifying which neighborhood characterisitcs (at the block group level) can be used to predict both the duration of the outage and the estimated number of customers affected. Through this project we hoped to both expand our understanding of predictive models and identify any patterns in who outages impact. Given the contentious nature of PG&E's performance over the last few years, it is especially relevant now to understand how their infrastructure impacts Californians and it is imperative that we focus this investigation through the lens of equity.
 
-## Scripts
+## scripts
 This folder contains all code used in cleaning, EDA, and report-making.
 
 ## cleaned_data
