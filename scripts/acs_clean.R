@@ -1,7 +1,7 @@
 # -------------------------------------------------------------------------
 # Created by: Matt Alvarez-Nissen                         
 # Date created: Oct. 6, 2020                
-# Last revised: Oct. 6, 2020                 
+# Last revised: Oct. 16, 2020                 
 # Project: MS&E 226 Final Project       
 # Subproject: Data Cleaning 
 # Re: Prepare ACS data 
@@ -32,6 +32,10 @@
 # Vacancy (proportion) - 1 column, could be converted to binary
 # Food stamps/SNAP (proportion) - 1 column, could be converted to binary
 
+# 10/16/20 - switching over to tracts (more accurate demographics, can account 
+# for larger outages). dropping poverty (way too correlated to income measures).
+# dropped SNAP variable as well.
+
 # Setup -------------------------------------------------------------------
 # Packages: 
 library(tidyverse)
@@ -48,7 +52,6 @@ setwd(homedir)
 
 # Import data: 
 
-
 # Parameters:
 
 # Main Script -------------------------------------------------------------
@@ -60,7 +63,7 @@ acs_vars <- load_variables(year = 2018, dataset = "acs5", cache = TRUE)
 ## ACS race data (2018)
 acs_race <-
   get_acs(
-    geography = "block group",
+    geography = "tract",
     table = "B03002",
     year = 2018,
     cache_table = TRUE,
@@ -83,10 +86,8 @@ acs_race <-
     names_from = label,
     values_from = estimate
   ) %>% 
-  # merge multiracial categories
-  mutate(
-    multi_racial = sum(c_across(starts_with("two_or_more")), na.rm = TRUE)
-  ) %>% 
+  # rename multiracial category
+  rename(multi_racial = two_or_more_races) %>%
   # select out separated multiracial categories
   select(-starts_with("two_or_more")) %>% 
   # create proportions by tract
@@ -98,26 +99,221 @@ acs_race <-
     )
   ) %>% 
   # select for just tract ID, total population, and proportions
-  select(GEOID, est_total, starts_with("prop")) %>%
+  select(GEOID, starts_with("prop")) %>%
   select(-prop_est_total) %>% 
   rename(prop_latino = prop_est_total_hispanic_or_latino)
 
 ## ACS income data (2018)
+### Read in median income by tract
+acs_median_income <-
+  get_acs(
+    geography = "tract",
+    variables = "B06011_001",
+    year = 2018,
+    cache_table = TRUE,
+    state = "CA"
+  ) %>% 
+  select(GEOID, ami = estimate) 
+
+## ACS income data (2018)
+acs_income <-
+  get_acs(
+    geography = "tract",
+    table = "B19001",
+    year = 2018,
+    cache_table = TRUE,
+    state = "CA"
+  ) %>% 
+  left_join(acs_vars, by = c("variable" = "name")) %>% 
+  select(GEOID, label, estimate) %>% 
+  mutate(
+    # convert names to better form
+    label = str_to_lower(str_replace_all(label, "!!|\\s+", "_")),
+    # short estimate to est
+    label = str_replace_all(label, "estimate", "est"),
+    est_total = if_else(label == "est_total", estimate, NA_real_)
+  ) %>% 
+  group_by(GEOID) %>% 
+  fill(everything(), .direction = "down") %>% 
+  ungroup() %>% 
+  filter(label != "est_total") %>% 
+  mutate(
+    label = str_extract(label, "\\$\\d+,\\d+$"),
+    label = str_remove_all(label, "\\$|[:punct:]"),
+    label = if_else(is.na(label), 500000, as.double(label))
+  ) %>% 
+  rename(upper_income_limit = label) %>% 
+  left_join(acs_median_income, by = "GEOID") %>% 
+  # construct the income categories
+  mutate(
+    income_category =
+      case_when(
+        upper_income_limit <= (.30 * ami)       ~ "eli",
+        upper_income_limit <= (.50 * ami) & 
+          upper_income_limit > (.30 * ami)      ~ "vli",
+        upper_income_limit <= (.80 * ami) & 
+          upper_income_limit > (.50 * ami)      ~ "li",
+        upper_income_limit <= (1.20 * ami) & 
+          upper_income_limit > (.80 * ami)      ~ "mi",
+        upper_income_limit > (1.20 * ami)       ~ "hi",
+        TRUE                                    ~ NA_character_
+      )
+  ) %>%
+  select(GEOID, estimate, income_category, est_total) %>% 
+  group_by(GEOID, income_category) %>% 
+  mutate(estimate = sum(estimate, na.rm = TRUE)) %>% 
+  slice(1) %>% 
+  ungroup() %>% 
+  # change shape of data
+  pivot_wider(names_from = income_category, values_from = estimate) %>% 
+  select(-`NA`) %>% 
+  # create proportions by tract
+  mutate(
+    across(
+      eli:vli,
+      ~ . / est_total,
+      .names = "prop_{.col}"
+    )
+  ) %>% 
+  # select for just tract ID, total population, and proportions
+  select(GEOID, starts_with("prop")) %>% 
+  mutate(across(where(is.double), ~ replace_na(.x, replace = 0)))
+
+rm(acs_median_income)
 
 ## ACS tenure data (2018)
+acs_tenure <-
+  get_acs(
+    geography = "tract",
+    table = "B25003",
+    year = 2018,
+    cache_table = TRUE,
+    state = "CA"
+  ) %>% 
+  left_join(acs_vars, by = c("variable" = "name")) %>% 
+  select(GEOID, label, estimate) %>% 
+  mutate(
+    # convert names to better form
+    label = str_to_lower(str_replace_all(label, "!!|\\s+", "_")),
+    # short estimate to est
+    label = str_replace_all(label, "estimate", "est"),
+    est_total = if_else(label == "est_total", estimate, NA_real_)
+  ) %>% 
+  group_by(GEOID) %>% 
+  fill(everything(), .direction = "down") %>% 
+  ungroup() %>% 
+  filter(label != "est_total") %>% 
+  mutate(label = str_remove_all(label, "est_total_|_occupied")) %>% 
+  pivot_wider(names_from = label, values_from = estimate) %>% 
+  # create proportions by tract
+  mutate(
+    across(
+      owner:renter,
+      ~ . / est_total,
+      .names = "prop_{.col}"
+    )
+  ) 
 
 ## ACS college-educated data (2018) 
-
-## ACS poverty data (2018)
+acs_education <-
+  get_acs(
+    geography = "tract",
+    table = "B15003",
+    year = 2018,
+    cache_table = TRUE,
+    state = "CA"
+  ) %>% 
+  left_join(acs_vars, by = c("variable" = "name")) %>% 
+  select(GEOID, label, estimate) %>% 
+  mutate(
+    # convert names to better form
+    label = str_to_lower(str_replace_all(label, "!!|\\s+", "_")),
+    # short estimate to est
+    label = str_replace_all(label, "estimate", "est"),
+    est_total = if_else(label == "est_total", estimate, NA_real_)
+  ) %>% 
+  group_by(GEOID) %>% 
+  fill(everything(), .direction = "down") %>% 
+  ungroup() %>% 
+  filter(label != "est_total") %>% 
+  mutate(
+    label = str_remove_all(label, "est_total_"),
+    label =
+      case_when(
+        str_detect(
+          label, "associate|bachelor|master|professional|doctorate"
+        )                                                           ~ "college",
+        str_detect(
+          label, "high_school|ged_or_|some_college"             
+        )                                                       ~ "high_school",
+        TRUE                                                    ~ "less_than_hs"
+      )
+  ) %>% 
+  group_by(GEOID, label) %>% 
+  mutate(estimate = sum(estimate, na.rm = TRUE)) %>% 
+  slice(1) %>% 
+  ungroup() %>% 
+  pivot_wider(names_from = label, values_from = estimate) %>% 
+  # create proportions by tract
+  mutate(
+    across(
+      college:less_than_hs,
+      ~ . / est_total,
+      .names = "prop_{.col}"
+    )
+  ) %>% 
+  # select for just tract ID, total population, and proportions
+  select(GEOID, starts_with("prop"))
 
 ## ACS vacancy data (2018) 
+acs_vacancy <-
+  get_acs(
+    geography = "tract",
+    table = "B25004",
+    year = 2018,
+    cache_table = TRUE,
+    state = "CA"
+  ) %>% 
+  left_join(acs_vars, by = c("variable" = "name")) %>% 
+  select(GEOID, label, estimate) %>% 
+  mutate(
+    # convert names to better form
+    label = str_to_lower(str_replace_all(label, "!!|\\s+", "_")),
+    # short estimate to est
+    label = str_replace_all(label, "estimate", "est")
+  ) %>% 
+  filter(
+    label %in% 
+      c(
+        "est_total_for_rent", "est_total_rented,_not_occupied", 
+        "est_total_for_sale_only", "est_total_sold,_not_occupied"
+      )
+  ) %>% 
+  mutate(label = str_remove_all(label, "est_total_|,")) %>% 
+  pivot_wider(names_from = label, values_from = estimate) %>% 
+  left_join(acs_tenure, by = "GEOID") %>% 
+  transmute(
+    GEOID = GEOID,
+    rental_vacancy_rate = for_rent / (renter + rented_not_occupied + for_rent),
+    owner_vacancy_rate = for_sale_only / (owner + sold_not_occupied + for_sale_only)
+  )
 
-## ACS food stamps/SNAP data (2018)
-
+### Update tenure
+acs_tenure <- 
+  acs_tenure %>%  
+  # select for just tract ID, total population, and proportions
+  select(GEOID, starts_with("prop"))
 
 # Merge all ACS data
+acs_merged <-
+  acs_race %>% 
+  left_join(acs_income, by = "GEOID") %>% 
+  left_join(acs_education, by = "GEOID") %>% 
+  left_join(acs_tenure, by = "GEOID") %>% 
+  left_join(acs_vacancy, by = "GEOID")
 
 # Save Results ------------------------------------------------------------
 write_csv(
-  path =
+  acs_merged,
+  file = paste0(homedir, savedir, "acs_clean.csv")
 )
