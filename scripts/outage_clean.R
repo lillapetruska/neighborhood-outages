@@ -1,7 +1,7 @@
 # -------------------------------------------------------------------------
 # Created by: Matt Alvarez-Nissen                         
 # Date created: Oct. 5, 2020                
-# Last revised: Oct. 6, 2020                 
+# Last revised: Oct. 16, 2020                 
 # Project: MS&E 226 Final Project       
 # Subproject: Data Cleaning 
 # Re: Clean and prepare PG&E power outage data  
@@ -24,6 +24,9 @@
 # 10/6/20 - switched from outage_snapshot to outages_expanded, which computes 
 # total duration of outage. Also switched from tract to block group.
 # The result produces multiple outages per block group. Dropping date time info.
+
+# 10/16/20 - added binary flag if number of customers affected is greater 
+# than average
 
 # Setup -------------------------------------------------------------------
 # Packages: 
@@ -75,6 +78,10 @@ outages_filter <-
   # select out unnecessary columns
   select(
     GEOID, outage_duration_hr = possible_duration_hours, mean_cust_affected
+  ) %>% 
+  mutate(
+    cust_affected_flag =
+      if_else(mean_cust_affected > mean(mean_cust_affected), 1, 0)
   )
 
 # Remove unnecessary objects
