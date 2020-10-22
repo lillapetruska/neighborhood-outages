@@ -1,0 +1,128 @@
+---
+title: "EDA and Predictive Models"
+author: "Matt Alvarez-Nissen"
+date: "10/21/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Script Description
+This analyzes merged ACS and PG&E data. Conducts EDA and generates predictive 
+models.
+
+# Inputs:
+Merged ACS/PG&E data
+
+# Outputs:
+EDA visualizations
+Predictive model outcomes
+
+# Update log: 
+
+# Setup 
+```{r}
+# Packages: 
+library(tidyverse)
+library(Hmisc)
+library(data.table)
+library(foreach)
+library(skimr)
+
+# Directories: 
+homedir <- "E:/neighborhood-outages/"
+workdir <- "cleaned_data/"
+savedir <- "visualizations/"
+
+# Import data: 
+# test data set to set up models
+outages_full <- read_csv(paste0(homedir, workdir, "acs_clean.csv"))
+
+# Parameters:
+## List of outcome variables
+outcome_vars <- c("outage_duration_hr", "cust_affected_flag")
+## List of covariates
+continuous_vars <- names(outages_full %>% select(-any_of(outcome_vars)))
+                                                # change to all_of once ready
+```
+
+  
+# Main Script
+
+# EDA
+## Correlations
+```{r}
+### Generate correlation matrices with p-values ###
+
+# remove continuous/outcome vars if sd < 0
+corr_matrix <- 
+  outages_full %>%
+  #select(all_of(continuous_vars), all_of(outcome_vars)) %>% 
+  select(where(~sd(., na.rm = TRUE) > 0))
+
+# create correlation matrix
+corr_matrix <- rcorr(as.matrix(corr_matrix)) 
+corr_matrix <- 
+  # merge p-values
+  bind_cols(
+    as.data.frame(corr_matrix$r),
+    as.data.frame(corr_matrix$P) %>% rename_all(~paste0(.x, "_p-value")) 
+  ) %>%
+  # filter to relevant predictor and outcome variables
+  select(all_of(outcome_vars), all_of(paste0(outcome_vars, "_p-value"))) %>%
+  rownames_to_column(var = "predictor") %>%
+  filter(
+    predictor %in% c(continuous_vars, paste0(continuous_vars, "_p-value"))
+  ) %>%
+  column_to_rownames(var = "predictor") %>%
+  select(sort(colnames(.))) %>%
+  as.data.frame()
+```
+
+```{r}
+# Code below is taken from lab, will need to adjust
+
+### Filter to highest correlated & statistical significant ###
+# For each outcome variable, select significant correlations (in abs value)
+
+# # create list of variables to use as a filter
+# corr_top <- foreach(out = outcome_vars) %do% {
+#   out_p <- paste0(out, "_p-value")
+#   corr_matrix %>% 
+#     select(!!out, !!out_p) %>% 
+#     filter(!!sym(out_p) < 0.05) %>%
+#     arrange(desc(abs(.))) %>%   
+#     # slice to the top 10 results
+#     # head(10) %>% 
+#     # extract the rownames for filtering
+#     rename_all(~str_remove(., "outcome_")) %>%
+#     rownames_to_column(var = "predictor") %>%
+#     mutate(predictor = str_remove(predictor, "continuous_"))  
+# }
+# names(corr_top) <- str_remove(outcome_vars, "outcome_")
+
+#corr_top
+```
+
+
+## Summary statistics
+```{r}
+summary(outages_full)
+```
+
+```{r}
+skim(outages_full)
+```
+
+## Bar plots
+
+## Simple maps?
+
+# Predictive models
+## Regression
+### Baseline model
+```{r}
+# baseline_lm <- lm([INSERT OUTCOME HERE] ~ ., data = outages_full)
+```

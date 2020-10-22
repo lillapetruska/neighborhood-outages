@@ -36,6 +36,9 @@
 # for larger outages). dropping poverty (way too correlated to income measures).
 # dropped SNAP variable as well.
 
+# 10/22/20 - switched from tract median income to county median income to 
+# determine income groupings.
+
 # Setup -------------------------------------------------------------------
 # Packages: 
 library(tidyverse)
@@ -107,7 +110,7 @@ acs_race <-
 ### Read in median income by tract
 acs_median_income <-
   get_acs(
-    geography = "tract",
+    geography = "county",
     variables = "B06011_001",
     year = 2018,
     cache_table = TRUE,
@@ -140,10 +143,11 @@ acs_income <-
   mutate(
     label = str_extract(label, "\\$\\d+,\\d+$"),
     label = str_remove_all(label, "\\$|[:punct:]"),
-    label = if_else(is.na(label), 500000, as.double(label))
+    label = if_else(is.na(label), 500000, as.double(label)),
+    county = str_extract(GEOID, "^\\d{5}")
   ) %>% 
   rename(upper_income_limit = label) %>% 
-  left_join(acs_median_income, by = "GEOID") %>% 
+  left_join(acs_median_income, by = c("county" = "GEOID")) %>% 
   # construct the income categories
   mutate(
     income_category =
@@ -166,7 +170,7 @@ acs_income <-
   ungroup() %>% 
   # change shape of data
   pivot_wider(names_from = income_category, values_from = estimate) %>% 
-  select(-`NA`) %>% 
+  #select(-`NA`) %>% 
   # create proportions by tract
   mutate(
     across(
