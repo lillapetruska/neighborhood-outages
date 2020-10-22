@@ -170,7 +170,6 @@ acs_income <-
   ungroup() %>% 
   # change shape of data
   pivot_wider(names_from = income_category, values_from = estimate) %>% 
-  #select(-`NA`) %>% 
   # create proportions by tract
   mutate(
     across(
