@@ -22,14 +22,22 @@
 # Update log:
 # 10/22/20 - created summary stats for PG&E outaged data by census tract and
 # joined this data onto ACS census tract data.
+# 10/22/20 - fixed binary flag, converted NA's in outage stats after ACS merge 
+# to 0s
 
 # Setup -------------------------------------------------------------------
 # Packages:
 library(tidyverse)
 
+# Directories: 
+homedir <- "E:/neighborhood-outages/"
+workdir <- "cleaned_data/"
+savedir <- "cleaned_data/"
+setwd(homedir)
+
 # Parameters
-outages_filepath <- "~/GitHub/neighborhood-outages/cleaned_data/outages_clean.csv"
-acs_filepath <- "~/GitHub/neighborhood-outages/cleaned_data/acs_clean.csv"
+outages_filepath <- paste0(homedir, workdir, "outages_clean.csv")
+acs_filepath <- paste0(homedir, workdir, "acs_clean.csv")
 
 # Import data:
 outages <- read_csv(outages_filepath)
@@ -41,15 +49,45 @@ outages_grouped <-
   outages %>%
   group_by(GEOID) %>%
   summarise(
-    median_outage_duration_hrr = median(outage_duration_hr),
-    median_mean_cust_affected = median(mean_cust_affected),
-    num_cust_affected_flag = sum(cust_affected_flag)
-  )
+    median_outage_duration_hr = median(outage_duration_hr),
+    median_mean_cust_affected = median(mean_cust_affected)
+  ) %>% 
+  ungroup() %>% 
+  mutate(
+    above_median_cust_affected = 
+      if_else(
+        median_mean_cust_affected > median(median_mean_cust_affected), 1, 0
+      )
+  ) %>% 
+  # remove median of mean customers affected column
+  select(-median_mean_cust_affected)
 
 acs_outages <-
   acs %>%
-  left_join(outages, by = "GEOID")
+  left_join(outages_grouped, by = "GEOID") %>% 
+  mutate(
+    median_outage_duration_hr = replace_na(median_outage_duration_hr, 0),
+    above_median_cust_affected = replace_na(above_median_cust_affected, 0)
+  )
 
 # CA census tracts that we don't have outage data for, as they are likely
 # not serviced by PG&E.
-setdiff(acs$GEOID, outages_grouped$GEOID)
+non_outage_tracts <- 
+  setdiff(acs$GEOID, outages_grouped$GEOID) %>% 
+  as_tibble() %>% 
+  rename(non_pge_tract = value)
+
+rm(acs, outages, outages_grouped)
+
+# Save Results ------------------------------------------------------------
+## write merged ACS outages data
+write_csv(
+  acs_outages,
+  file = paste0(homedir, savedir, "acs_outages.csv")
+)
+
+## write non-outage tracts
+write_csv(
+  non_outage_tracts,
+  file = paste0(homedir, savedir, "non_outage_tracts.csv")
+)

@@ -28,6 +28,8 @@
 # 10/16/20 - added binary flag if number of customers affected is greater 
 # than average
 
+# 10/22/20 - switched from block groups to tracts
+
 # Setup -------------------------------------------------------------------
 # Packages: 
 library(tidyverse)
@@ -50,7 +52,7 @@ outages <- read_csv(paste0(homedir, workdir, "outages_expanded.csv"))
 # Main Script -------------------------------------------------------------
 
 # Read in California block groups
-ca_block_groups <- block_groups(state = "CA")
+ca_tracts <- tracts(state = "CA")
 
 # Filter outages and geocode lat/long to Census tract
 outages_filter <-
@@ -69,26 +71,22 @@ outages_filter <-
   ) %>% 
   # convert to sf object
   st_as_sf(
-    coords = c("longitude", "latitude"), crs = st_crs(ca_block_groups)
+    coords = c("longitude", "latitude"), crs = st_crs(ca_tracts)
   ) %>%
   # join to CA block groups
-  st_join(ca_block_groups) %>% 
+  st_join(ca_tracts) %>% 
   # drop geometry
   st_drop_geometry() %>% 
   # select out unnecessary columns
   select(
     GEOID, outage_duration_hr = possible_duration_hours, mean_cust_affected
-  ) %>% 
-  mutate(
-    cust_affected_flag =
-      if_else(mean_cust_affected > mean(mean_cust_affected), 1, 0)
   )
 
 # Remove unnecessary objects
-rm(ca_block_groups, outages)
+rm(ca_tracts, outages)
 
 # Save Results ------------------------------------------------------------
 write_csv(
   outages_filter,
-  path = paste0(homedir, savedir, "outages_clean.csv")
+  file = paste0(homedir, savedir, "outages_clean.csv")
 )
