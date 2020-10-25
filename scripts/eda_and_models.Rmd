@@ -191,6 +191,20 @@ acs_outages %>%
   theme_grey(base_size = 5)
 ```
 
+## Median outage histogramt
+```{r}
+acs_outages %>% 
+  ggplot(aes(x = median_outage_duration_hr)) +
+  geom_histogram(bins = 100)
+```
+
+## Above average customer affected distribution plot
+```{r}
+acs_outages %>% 
+  ggplot(aes(x = as.factor(above_median_cust_affected))) +
+  geom_bar()
+```
+
 ## Bar plots
 ### Race
 ```{r, message=FALSE, warning=FALSE}
@@ -438,7 +452,9 @@ acs_outages %>%
 ```{r}
 # Set up data for classification (and drop NAs)
 acs_outages_class <- 
-  acs_outages %>% select(-c(GEOID, median_outage_duration_hr)) %>% drop_na()
+  acs_outages %>% 
+  select(-c(GEOID, median_outage_duration_hr)) %>% 
+  drop_na() 
 ```
 
 ```{r}
@@ -456,23 +472,24 @@ AIC is 1998.9.
 
 ```{r}
 # Create confusion matrix
-acs_outages_class$pred <- 
+pred <- 
   if_else(logit_mod$fitted.values > 0.5, "1", "0")
 
 confusion_matrix <-
-  table(acs_outages_class$above_median_cust_affected, acs_outages_class$pred)
+  table(acs_outages_class$above_median_cust_affected, pred)
 rownames(confusion_matrix) <- c("Obs. 0", "Obs. 1")
 colnames(confusion_matrix) <- c("Pred. 0", "Pred. 1")
 confusion_matrix
 ```
 
 ```{r}
-# calculate efficiency
-efficiency <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
-efficiency
+# calculate True Positive Rate
+base_tpr <- 
+  confusion_matrix[2,2] / (confusion_matrix[2,1] + confusion_matrix[2,2])
+base_tpr
 ```
 
-Accuracy of the model is about 80.6%.
+The TPR of the baseline model is about 0.049
 
 ```{r, warning=FALSE, message=FALSE}
 # Plot ROC Curve
@@ -493,44 +510,95 @@ auc(
 )
 ```
 
+Major goal is to increase True Positive Rate (which is about 0.05 for the 
+baseline model). TPR is equivalent to the Sensitivity.
+
 ### Final model (K-nearest neighbors algorithm)
+
 ```{r}
-# Look at results of the model
-logit_mod <-
-  glm(
-    above_median_cust_affected ~ .,
-    data = acs_outages_class, 
-    family = binomial
-  )
-summary(logit_mod)
+set.seed(243)
+# create training and validation sets
+class_validation <- 
+  acs_outages_class %>% 
+  mutate(
+    rowid = row_number(),
+    # convert 1/0 to Yes/No
+    above_median_cust_affected =
+      if_else(above_median_cust_affected == 1, "Yes", "No")
+  ) %>% 
+  slice_sample(prop = .2)
+
+class_train <- 
+  acs_outages_class %>% 
+  mutate(
+    rowid = row_number(),
+    # convert 1/0 to Yes/No
+    above_median_cust_affected =
+      if_else(above_median_cust_affected == 1, "Yes", "No")
+  ) %>%
+  filter(!(rowid %in% class_validation$rowid)) %>% 
+  select(-rowid)
+
+class_validation <- class_validation %>% select(-rowid)
+
+# Extract outcome variable for 'cl' argument
+target_category <- class_train$above_median_cust_affected
+# Extract outcome variable to measure accuracy
+test_category <- class_validation$above_median_cust_affected
 ```
 
-AIC is 1998.9.
+```{r}
+set.seed(243)
+# Set to 10-fold CV
+train_control <- 
+  trainControl(
+    method = "cv",
+    number = 10, 
+    classProbs = TRUE,
+    summaryFunction = twoClassSummary
+  )
+
+# Evaluate accuracy of KNN classifiers
+class_fit <-
+  train(
+    as.factor(above_median_cust_affected) ~ .,
+    method = "knn",
+    # Limit to k = sqrt(n)
+    tuneGrid = expand.grid(k = 1:sqrt(nrow(acs_outages_class))),
+    trControl = train_control,
+    metric = "ROC",
+    data = class_train 
+  )
+```
+
+```{r}
+# Plot results of fitted KNN model
+plot(class_fit, print.thres = 0.5, type = "S")
+```
+
 
 ```{r}
 # Create confusion matrix
-acs_outages_class$pred <- 
-  if_else(logit_mod$fitted.values > 0.5, "1", "0")
-
-confusion_matrix <-
-  table(acs_outages_class$above_median_cust_affected, acs_outages_class$pred)
-rownames(confusion_matrix) <- c("Obs. 0", "Obs. 1")
-colnames(confusion_matrix) <- c("Pred. 0", "Pred. 1")
-confusion_matrix
+confusion_matrix_knn <- table(knn_mod, test_category)
+rownames(confusion_matrix_knn) <- c("Obs. 0", "Obs. 1")
+colnames(confusion_matrix_knn) <- c("Pred. 0", "Pred. 1")
+confusion_matrix_knn
 ```
 
 ```{r}
-# calculate efficiency
-efficiency <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
-efficiency
+# calculate True Positive Rate
+model_tpr <- 
+  confusion_matrix_knn[2,2] / 
+  (confusion_matrix_knn[2,1] + confusion_matrix_knn[2,2])
+model_tpr
 ```
 
-Accuracy of the model is about 80.6%.
+
 
 ```{r}
 # Plot ROC Curve
 roc(
-  above_median_cust_affected ~ logit_mod$fitted.values, 
+  above_median_cust_affected ~ as.numeric(knn_pred), 
   data = acs_outages_class, 
   plot = TRUE,
   main = "ROC Curve",
