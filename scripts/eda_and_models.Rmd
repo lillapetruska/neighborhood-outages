@@ -33,6 +33,8 @@ library(skimr)
 library(knitr)
 library(kableExtra)
 library(GGally)
+library(caret)
+library(pROC)
 
 # Directories: 
 homedir <- "E:/neighborhood-outages/"
@@ -40,7 +42,8 @@ workdir <- "cleaned_data/"
 savedir <- "visualizations/"
 
 # Import data: 
-acs_outages <- read_csv(paste0(homedir, workdir, "acs_outages_train.csv"))
+acs_outages <- 
+  read_csv(paste0(homedir, workdir, "acs_outages_train.csv"))
 
 # Parameters:
 ## List of outcome variables
@@ -54,7 +57,6 @@ continuous_vars <- names(acs_outages %>% select(-all_of(outcome_vars)))
 # Main Script
 
 # EDA
-
 ## Summary statistics
 ```{r}
 summary(acs_outages)
@@ -432,4 +434,114 @@ acs_outages %>%
 ```
 
 ## Classification
-### Baseline model
+### Baseline model (logistic regression)
+```{r}
+# Set up data for classification (and drop NAs)
+acs_outages_class <- 
+  acs_outages %>% select(-c(GEOID, median_outage_duration_hr)) %>% drop_na()
+```
+
+```{r}
+# Look at results of the model
+logit_mod <-
+  glm(
+    above_median_cust_affected ~ .,
+    data = acs_outages_class, 
+    family = binomial
+  )
+summary(logit_mod)
+```
+
+AIC is 1998.9.
+
+```{r}
+# Create confusion matrix
+acs_outages_class$pred <- 
+  if_else(logit_mod$fitted.values > 0.5, "1", "0")
+
+confusion_matrix <-
+  table(acs_outages_class$above_median_cust_affected, acs_outages_class$pred)
+rownames(confusion_matrix) <- c("Obs. 0", "Obs. 1")
+colnames(confusion_matrix) <- c("Pred. 0", "Pred. 1")
+confusion_matrix
+```
+
+```{r}
+# calculate efficiency
+efficiency <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+efficiency
+```
+
+Accuracy of the model is about 80.6%.
+
+```{r, warning=FALSE, message=FALSE}
+# Plot ROC Curve
+roc(
+  above_median_cust_affected ~ logit_mod$fitted.values, 
+  data = acs_outages_class, 
+  plot = TRUE,
+  main = "Baseline ROC Curve",
+  col= "blue"
+)
+```
+
+```{r, warning=FALSE, message=FALSE}
+# determine AUC
+auc(
+  above_median_cust_affected ~ logit_mod$fitted.values, 
+  data = acs_outages_class
+)
+```
+
+### Final model (K-nearest neighbors algorithm)
+```{r}
+# Look at results of the model
+logit_mod <-
+  glm(
+    above_median_cust_affected ~ .,
+    data = acs_outages_class, 
+    family = binomial
+  )
+summary(logit_mod)
+```
+
+AIC is 1998.9.
+
+```{r}
+# Create confusion matrix
+acs_outages_class$pred <- 
+  if_else(logit_mod$fitted.values > 0.5, "1", "0")
+
+confusion_matrix <-
+  table(acs_outages_class$above_median_cust_affected, acs_outages_class$pred)
+rownames(confusion_matrix) <- c("Obs. 0", "Obs. 1")
+colnames(confusion_matrix) <- c("Pred. 0", "Pred. 1")
+confusion_matrix
+```
+
+```{r}
+# calculate efficiency
+efficiency <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+efficiency
+```
+
+Accuracy of the model is about 80.6%.
+
+```{r}
+# Plot ROC Curve
+roc(
+  above_median_cust_affected ~ logit_mod$fitted.values, 
+  data = acs_outages_class, 
+  plot = TRUE,
+  main = "ROC Curve",
+  col= "blue"
+)
+```
+
+```{r, warning=FALSE, message=FALSE}
+# determine AUC
+auc(
+  above_median_cust_affected ~ logit_mod$fitted.values, 
+  data = acs_outages_class
+)
+```
