@@ -23,13 +23,16 @@ Predictive model outcomes
 # Update log: 
 
 # Setup 
-```{r}
+```{r, warning=FALSE, message=FALSE}
 # Packages: 
 library(tidyverse)
 library(Hmisc)
 library(data.table)
 library(foreach)
 library(skimr)
+library(knitr)
+library(kableExtra)
+library(GGally)
 
 # Directories: 
 homedir <- "E:/neighborhood-outages/"
@@ -37,30 +40,71 @@ workdir <- "cleaned_data/"
 savedir <- "visualizations/"
 
 # Import data: 
-# test data set to set up models
-outages_full <- read_csv(paste0(homedir, workdir, "acs_clean.csv"))
+acs_outages <- read_csv(paste0(homedir, workdir, "acs_outages_train.csv"))
 
 # Parameters:
 ## List of outcome variables
-outcome_vars <- c("outage_duration_hr", "cust_affected_flag")
+outcome_vars <- c("median_outage_duration_hr", "above_median_cust_affected")
+
 ## List of covariates
-continuous_vars <- names(outages_full %>% select(-any_of(outcome_vars)))
-                                                # change to all_of once ready
+continuous_vars <- names(acs_outages %>% select(-all_of(outcome_vars)))
 ```
 
   
 # Main Script
 
 # EDA
+
+## Summary statistics
+```{r}
+summary(acs_outages)
+```
+
+```{r}
+skim(acs_outages)
+```
+
+## Missing values
+```{r}
+# NA values?
+# Filter all the columns to exclude NA
+no_na_df <-
+  acs_outages %>% 
+  filter(across(everything(), ~ !is.na(.)))
+
+acs_outages %>% 
+  filter(!(GEOID %in% no_na_df$GEOID)) %>% 
+  arrange(desc(prop_white))
+```
+
+Not that many NAs, not sure if worth dropping. Some rows with NAs have otherwise
+valuable data.
+
+```{r}
+# NULL values?
+# Filter all the columns to exclude NA
+no_null_df <-
+  acs_outages %>% 
+  filter(across(everything(), ~ !is.null(.)))
+
+acs_outages %>% 
+  filter(!(GEOID %in% no_null_df$GEOID)) %>% 
+  arrange(desc(prop_white))
+```
+
+No NULL values.
+
 ## Correlations
 ```{r}
 ### Generate correlation matrices with p-values ###
 
 # remove continuous/outcome vars if sd < 0
 corr_matrix <- 
-  outages_full %>%
-  #select(all_of(continuous_vars), all_of(outcome_vars)) %>% 
-  select(where(~sd(., na.rm = TRUE) > 0))
+  acs_outages %>%
+  select(all_of(continuous_vars), all_of(outcome_vars)) %>% 
+  select(where(~sd(., na.rm = TRUE) > 0)) %>% 
+  #select out GEOID
+  select(-GEOID)
 
 # create correlation matrix
 corr_matrix <- rcorr(as.matrix(corr_matrix)) 
@@ -82,43 +126,303 @@ corr_matrix <-
 ```
 
 ```{r}
-# Code below is taken from lab, will need to adjust
-
 ### Filter to highest correlated & statistical significant ###
 # For each outcome variable, select significant correlations (in abs value)
 
-# # create list of variables to use as a filter
-# corr_top <- foreach(out = outcome_vars) %do% {
-#   out_p <- paste0(out, "_p-value")
-#   corr_matrix %>% 
-#     select(!!out, !!out_p) %>% 
-#     filter(!!sym(out_p) < 0.05) %>%
-#     arrange(desc(abs(.))) %>%   
-#     # slice to the top 10 results
-#     # head(10) %>% 
-#     # extract the rownames for filtering
-#     rename_all(~str_remove(., "outcome_")) %>%
-#     rownames_to_column(var = "predictor") %>%
-#     mutate(predictor = str_remove(predictor, "continuous_"))  
-# }
-# names(corr_top) <- str_remove(outcome_vars, "outcome_")
+# create list of variables to use as a filter
+corr_top <- foreach(out = outcome_vars) %do% {
+  out_p <- paste0(out, "_p-value")
+  corr_matrix %>%
+    select(!!out, !!out_p) %>%
+    filter(!!sym(out_p) < 0.05) %>%
+    arrange(desc(abs(.))) %>%
+    # slice to the top 10 results
+    # head(10) %>%
+    # extract the rownames for filtering
+    rename_all(~str_remove(., "outcome_")) %>%
+    rownames_to_column(var = "predictor") %>%
+    mutate(predictor = str_remove(predictor, "continuous_"))
+}
+names(corr_top) <- str_remove(outcome_vars, "outcome_")
 
-#corr_top
-```
-
-
-## Summary statistics
-```{r}
-summary(outages_full)
+corr_top$median_outage_duration_hr %>% 
+  kable(caption = "Median Outage Duration Correlations") %>% 
+  kableExtra::kable_classic() %>% 
+  #format for markdown
+  kable_styling(latex_options="scale_down")
 ```
 
 ```{r}
-skim(outages_full)
+corr_top$above_median_cust_affected %>% 
+  kable(caption = "Above Median Customer Affected Correlations") %>% 
+  kableExtra::kable_classic() %>% 
+  #format for markdown
+  kable_styling(latex_options="scale_down")
+```
+
+```{r, warning=FALSE, message=FALSE, fig.width=10, fig.height=8}
+# create ggpairs scatterplot - looking at top 10 correlations
+# visualize data to choose transformation
+
+ 
+# make a function to plot generic data with points and a loess line
+my_fn <- function(data, mapping, method="loess", ...){
+  p <- ggplot(data = data, mapping = mapping) +
+    geom_point(size = 0.01) +
+    geom_smooth(method=method, formula = y ~ x, ...)
+  return(p)
+}
+
+acs_outages %>%
+  select(-GEOID) %>%
+  # filter to significantly correlated variables
+  select(
+    all_of(outcome_vars),
+    corr_top$median_outage_duration_hr$predictor %>% head(10), 
+    corr_top$above_median_cust_affected$predictor %>% head(10)
+  ) %>% 
+  ggpairs(
+    upper = list(continuous = wrap("cor", size = 2), size = 0.01),
+    lower = list(continuous = my_fn, combo = wrap("facethist", binwidth = .1)),
+    progress = FALSE
+  ) +
+  theme_grey(base_size = 5)
 ```
 
 ## Bar plots
+### Race
+```{r, message=FALSE, warning=FALSE}
+acs_outages %>% 
+  pivot_longer(
+    cols = prop_white:prop_latino,
+    names_to = "race",
+    values_to = "prop_race"
+  ) %>% 
+  mutate(
+    race =str_to_title(str_replace_all(str_remove(race, "^prop_"), "_", " "))
+  ) %>% 
+  select(all_of(outcome_vars), race, prop_race) %>% 
+  ggplot(aes(x = median_outage_duration_hr, y = prop_race, color = race)) +
+  geom_point(alpha = .4) +
+  geom_smooth()
+```
 
-## Simple maps?
+```{r}
+acs_outages %>% 
+  pivot_longer(
+    cols = prop_white:prop_latino,
+    names_to = "race",
+    values_to = "prop_race"
+  ) %>% 
+  mutate(
+    race =str_to_title(str_replace_all(str_remove(race, "^prop_"), "_", " "))
+  ) %>% 
+  select(all_of(outcome_vars), race, prop_race) %>% 
+  group_by(above_median_cust_affected, race) %>% 
+  summarise(prop_race_mean = mean(prop_race, na.rm = TRUE)) %>% 
+  ggplot(
+    aes(
+      x = as_factor(above_median_cust_affected), 
+      y = prop_race_mean, 
+      fill = race
+    )
+  ) +
+  geom_col()
+```
+
+### Population density
+```{r}
+acs_outages %>% 
+  ggplot(aes(x = median_outage_duration_hr, y = pop_density_sq_km)) +
+  geom_point(alpha = .4) +
+  geom_smooth()
+```
+```{r}
+acs_outages %>% 
+  ggplot(
+    aes(
+      x = as_factor(above_median_cust_affected), 
+      y = pop_density_sq_km
+    )
+  ) +
+  geom_col()
+```
+
+### AMI Groups
+```{r, message=FALSE, warning=FALSE}
+acs_outages %>% 
+  pivot_longer(
+    cols = prop_eli:prop_vli,
+    names_to = "ami_group",
+    values_to = "prop_ami_group"
+  ) %>%  
+  mutate(
+    ami_group = 
+      str_to_upper(str_replace_all(str_remove(ami_group, "^prop_"), "_", " "))
+  ) %>% 
+  select(all_of(outcome_vars), ami_group, prop_ami_group) %>% 
+  ggplot(
+    aes(x = median_outage_duration_hr, y = prop_ami_group, color = ami_group)
+  ) +
+  geom_point(alpha = .4) +
+  geom_smooth()
+```
+
+```{r, warning=FALSE, message=FALSE}
+acs_outages %>% 
+ pivot_longer(
+    cols = prop_eli:prop_vli,
+    names_to = "ami_group",
+    values_to = "prop_ami_group"
+  ) %>% 
+  mutate(
+    race =
+      str_to_upper(str_replace_all(str_remove(ami_group, "^prop_"), "_", " "))
+  ) %>% 
+  select(all_of(outcome_vars), ami_group, prop_ami_group) %>% 
+  group_by(above_median_cust_affected, ami_group) %>% 
+  summarise(prop_ami_mean = mean(prop_ami_group, na.rm = TRUE)) %>% 
+  ggplot(
+    aes(
+      x = as_factor(above_median_cust_affected), 
+      y = prop_ami_mean, 
+      fill = ami_group
+    )
+  ) +
+  geom_col()
+```
+
+### Education
+```{r, message=FALSE, warning=FALSE}
+acs_outages %>% 
+  pivot_longer(
+    cols = prop_college:prop_less_than_hs,
+    names_to = "education",
+    values_to = "prop_education"
+  ) %>%   
+  mutate(
+    education = 
+      str_to_title(str_replace_all(str_remove(education, "^prop_"), "_", " "))
+  ) %>% 
+  select(all_of(outcome_vars), education, prop_education) %>% 
+  ggplot(
+    aes(x = median_outage_duration_hr, y = prop_education, color = education)
+  ) +
+  geom_point(alpha = .4) +
+  geom_smooth()
+```
+
+```{r, warning=FALSE, message=FALSE}
+acs_outages %>% 
+  pivot_longer(
+    cols = prop_college:prop_less_than_hs,
+    names_to = "education",
+    values_to = "prop_education"
+  ) %>% 
+  mutate(
+    education =
+      str_to_upper(str_replace_all(str_remove(education, "^prop_"), "_", " "))
+  ) %>% 
+  select(all_of(outcome_vars), education, prop_education) %>% 
+  group_by(above_median_cust_affected, education) %>% 
+  summarise(prop_education_mean = mean(prop_education, na.rm = TRUE)) %>% 
+  ggplot(
+    aes(
+      x = as_factor(above_median_cust_affected), 
+      y = prop_education_mean, 
+      fill = education
+    )
+  ) +
+  geom_col()
+```
+
+### Tenure
+```{r, message=FALSE, warning=FALSE}
+acs_outages %>% 
+  pivot_longer(
+    cols = prop_owner:prop_renter,
+    names_to = "tenure",
+    values_to = "prop_tenure"
+  ) %>%    
+  mutate(
+    tenure = 
+      str_to_title(str_replace_all(str_remove(tenure, "^prop_"), "_", " "))
+  ) %>% 
+  select(all_of(outcome_vars), tenure, prop_tenure) %>% 
+  ggplot(
+    aes(x = median_outage_duration_hr, y = prop_tenure, color = tenure)
+  ) +
+  geom_point(alpha = .4) +
+  geom_smooth()
+```
+
+```{r, warning=FALSE, message=FALSE}
+acs_outages %>% 
+  pivot_longer(
+    cols = prop_owner:prop_renter,
+    names_to = "tenure",
+    values_to = "prop_tenure"
+  ) %>% 
+  mutate(
+    tenure =
+      str_to_upper(str_replace_all(str_remove(tenure, "^prop_"), "_", " "))
+  ) %>% 
+  select(all_of(outcome_vars), tenure, prop_tenure) %>% 
+  group_by(above_median_cust_affected, tenure) %>% 
+  summarise(prop_tenure_mean = mean(prop_tenure, na.rm = TRUE)) %>% 
+  ggplot(
+    aes(
+      x = as_factor(above_median_cust_affected), 
+      y = prop_tenure_mean, 
+      fill = tenure
+    )
+  ) +
+  geom_col()
+```
+
+### Vacancy rates
+```{r, message=FALSE, warning=FALSE}
+acs_outages %>% 
+  pivot_longer(
+    cols = rental_vacancy_rate:owner_vacancy_rate,
+    names_to = "vacancy_type",
+    values_to = "vacancy_rate"
+  ) %>%  
+  mutate(
+    vacancy_type = 
+      str_to_title(str_replace_all(str_remove(vacancy_type, "^prop_"), "_", " "))
+  ) %>% 
+  select(all_of(outcome_vars), vacancy_type, vacancy_rate) %>% 
+  ggplot(
+    aes(x = median_outage_duration_hr, y = vacancy_rate, color = vacancy_type)
+  ) +
+  geom_point(alpha = .4) +
+  geom_smooth()
+```
+
+```{r, warning=FALSE, message=FALSE}
+acs_outages %>% 
+  pivot_longer(
+    cols = rental_vacancy_rate:owner_vacancy_rate,
+    names_to = "vacancy_type",
+    values_to = "vacancy_rate"
+  ) %>% 
+  mutate(
+    vacancy_type =
+      str_to_upper(str_replace_all(str_remove(vacancy_type, "^prop_"), "_", " "))
+  ) %>% 
+  select(all_of(outcome_vars), vacancy_type, vacancy_rate) %>% 
+  group_by(above_median_cust_affected, vacancy_type) %>% 
+  summarise(prop_vacancy_mean = mean(vacancy_rate, na.rm = TRUE)) %>% 
+  ggplot(
+    aes(
+      x = as_factor(above_median_cust_affected), 
+      y = prop_vacancy_mean, 
+      fill = vacancy_type
+    )
+  ) +
+  geom_col(position = "dodge")
+```
 
 # Predictive models
 ## Regression
@@ -126,3 +430,6 @@ skim(outages_full)
 ```{r}
 # baseline_lm <- lm([INSERT OUTCOME HERE] ~ ., data = outages_full)
 ```
+
+## Classification
+### Baseline model

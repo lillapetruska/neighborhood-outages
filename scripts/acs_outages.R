@@ -24,11 +24,13 @@
 # joined this data onto ACS census tract data.
 # 10/22/20 - fixed binary flag, converted NA's in outage stats after ACS merge
 # to 0s
+# 10/24/20 - created outage density variable (outages per square kilometer)
+# 10/25/20 - filtered full dataset to only include GEOIDs with outages (2722 total)
 
 # Setup -------------------------------------------------------------------
 # Packages:
 library(tidyverse)
-library(here)
+#library(here)
 
 # Directories:
 homedir <- "E:/neighborhood-outages/"
@@ -40,13 +42,15 @@ setwd(homedir)
 outages_filepath <- paste0(homedir, workdir, "outages_clean.csv")
 acs_filepath <- paste0(homedir, workdir, "acs_clean.csv")
 
-outages_filepath <- here("cleaned_data/outages_clean.csv")
-acs_filepath <- here("cleaned_data/acs_clean.csv")
-
+#outages_filepath <- here("cleaned_data/outages_clean.csv")
+#acs_filepath <- here("cleaned_data/acs_clean.csv")
 
 # Import data:
 outages <- read_csv(outages_filepath)
 acs <- read_csv(acs_filepath)
+
+# Parameters:
+set.seed(572)
 
 # Main Script -------------------------------------------------------------
 
@@ -69,13 +73,17 @@ outages_grouped <-
   select(-median_mean_cust_affected)
 
 acs_outages <-
-  acs %>%
-  left_join(outages_grouped, by = "GEOID") %>%
+  outages_grouped %>%
+  left_join(acs, by = "GEOID") %>%
   mutate(
     median_outage_duration_hr = replace_na(median_outage_duration_hr, 0),
     above_median_cust_affected = replace_na(above_median_cust_affected, 0),
-    num_outages = replace_na(num_outages, 0)
-  )
+    num_outages = replace_na(num_outages, 0),
+    n_outages_sq_km = num_outages / land_area_sq_km
+  ) %>% 
+  # drop unneeded variables
+  select(-c(num_outages, land_area_sq_km)) %>% 
+  mutate(rowid = row_number())
 
 # CA census tracts that we don't have outage data for, as they are likely
 # not serviced by PG&E.
@@ -84,13 +92,32 @@ non_outage_tracts <-
   as_tibble() %>%
   rename(non_pge_tract = value)
 
-rm(acs, outages, outages_grouped)
+# Create test and train sets
+
+acs_outages_test <- 
+  acs_outages %>% 
+  slice_sample(prop = .2)
+
+acs_outages_train <-
+  acs_outages %>% 
+  filter(!(rowid %in% acs_outages_test$rowid)) %>% 
+  select(-rowid) 
+
+acs_outages_test <- acs_outages_test %>% select(-rowid)
+
+rm(acs, outages, outages_grouped, acs_outages)
 
 # Save Results ------------------------------------------------------------
-## write merged ACS outages data
+## write test ACS outages data
 write_csv(
-  acs_outages,
-  file = paste0(homedir, savedir, "acs_outages.csv")
+  acs_outages_test,
+  file = paste0(homedir, savedir, "acs_outages_test.csv")
+)
+
+## write train ACS outages data
+write_csv(
+  acs_outages_train,
+  file = paste0(homedir, savedir, "acs_outages_train.csv")
 )
 
 ## write non-outage tracts
@@ -98,3 +125,5 @@ write_csv(
   non_outage_tracts,
   file = paste0(homedir, savedir, "non_outage_tracts.csv")
 )
+
+rm(non_outage_tracts, acs_outages_test, acs_outages_train)

@@ -39,6 +39,8 @@
 # 10/22/20 - switched from tract median income to county median income to 
 # determine income groupings.
 
+# 10/24/20 - added density metric using ALAND variable
+
 # Setup -------------------------------------------------------------------
 # Packages: 
 library(tidyverse)
@@ -61,6 +63,17 @@ setwd(homedir)
 
 # Load available variables for 2018 ACS
 acs_vars <- load_variables(year = 2018, dataset = "acs5", cache = TRUE)
+
+# load land area for each census tract
+ca_land_area <- 
+  tracts("CA") %>% 
+  st_drop_geometry() %>% 
+  select(GEOID, ALAND) %>% 
+  # convert from square meters to square kilometer
+  transmute(
+    GEOID = GEOID,
+    land_area_sq_km = ALAND / 1000000
+  )
 
 # Read in ACS data
 ## ACS race data (2018)
@@ -102,9 +115,14 @@ acs_race <-
     )
   ) %>% 
   # select for just tract ID, total population, and proportions
-  select(GEOID, starts_with("prop")) %>%
+  select(GEOID, est_total, starts_with("prop")) %>%
   select(-prop_est_total) %>% 
-  rename(prop_latino = prop_est_total_hispanic_or_latino)
+  rename(prop_latino = prop_est_total_hispanic_or_latino) %>% 
+  # join with land area to create density stat
+  left_join(ca_land_area, by = "GEOID") %>% 
+  mutate(pop_density_sq_km = est_total / land_area_sq_km) %>% 
+  # drop total population variable
+  select(-est_total)
 
 ## ACS income data (2018)
 ### Read in median income by tract
@@ -319,4 +337,9 @@ acs_merged <-
 write_csv(
   acs_merged,
   file = paste0(homedir, savedir, "acs_clean.csv")
+)
+
+rm(
+  acs_education, acs_income, acs_merged, acs_race, acs_tenure, 
+  acs_vacancy, acs_vars, ca_land_area
 )
