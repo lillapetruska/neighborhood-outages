@@ -191,7 +191,7 @@ acs_outages %>%
   theme_grey(base_size = 5)
 ```
 
-## Median outage histogramt
+## Median outage histogram
 ```{r}
 acs_outages %>% 
   ggplot(aes(x = median_outage_duration_hr)) +
@@ -202,7 +202,11 @@ acs_outages %>%
 ```{r}
 acs_outages %>% 
   ggplot(aes(x = as.factor(above_median_cust_affected))) +
-  geom_bar()
+  geom_bar(aes(y = (..count..)/sum(..count..))) + 
+  labs(
+    x = "Above Median Customers Affected",
+    y = "Proportion of Data"
+  )
 ```
 
 ## Bar plots
@@ -483,13 +487,13 @@ confusion_matrix
 ```
 
 ```{r}
-# calculate True Positive Rate
-base_tpr <- 
-  confusion_matrix[2,2] / (confusion_matrix[2,1] + confusion_matrix[2,2])
-base_tpr
+# calculate mean 0-1 loss
+base_01_loss <- 
+  (confusion_matrix[1,2] + confusion_matrix[2,1]) / nrow(acs_outages_class)
+base_01_loss
 ```
 
-The TPR of the baseline model is about 0.049
+The mean 0-1 loss is about 0.19.
 
 ```{r, warning=FALSE, message=FALSE}
 # Plot ROC Curve
@@ -510,10 +514,119 @@ auc(
 )
 ```
 
-Major goal is to increase True Positive Rate (which is about 0.05 for the 
-baseline model). TPR is equivalent to the Sensitivity.
+Major goal is optimize mean 0-1 loss. Want high sensitivity, but also want to
+generate as high specificity as possible (and reduce Type II error rate).
 
-### Final model (K-nearest neighbors algorithm)
+### Final model (PCA-based K-nearest neighbors algorithm)
+```{r}
+# conduct PCA (to reduce data, especially collinearity)
+
+# Find variance of each covariate
+train_col_var <- 
+  acs_outages_class %>% 
+  select(-above_median_cust_affected) %>% 
+  mutate(across(everything(), stats::var)) %>% 
+  distinct() %>% 
+  pivot_longer(cols = everything(), names_to = "vars", values_to = "variance") %>% 
+  # filter out 0 variance covariates
+  filter(variance != 0)
+
+# remove zero variance covariates
+class_filter <-
+  acs_outages_class %>% 
+  # remove outcome var as well
+  select(all_of(train_col_var$vars))
+
+# Run PCA
+pca <- prcomp(class_filter, scale = T, center = T)
+summary(pca)
+```
+
+```{r}
+# compute standard deviation of each principal component
+std_dev <- pca$sdev
+# compute variance
+pr_var <- std_dev^2
+# proportion of variance explained
+prop_var <- pr_var/sum(pr_var)
+
+# generate scree plot
+plot(
+  prop_var, 
+  xlab = "Principal Component",
+  ylab = "Proportion of Variance Explained",
+  type = "b"
+)
+```
+Around 16 components explains about 98% of variance.
+
+```{r}
+# PCA results
+pca_table <- 
+  data.frame(
+    above_median_cust_affected = acs_outages_class[,1] %>% pull(), pca$x
+  ) %>% 
+  #filter to the first 16 components
+  select(above_median_cust_affected:PC18) %>% 
+  bind_cols()
+```
+
+```{r}
+# Do 10-fold CV KNN
+set.seed(243)
+# Set train control
+knn_control <- 
+  trainControl(
+    method = "cv", 
+    number = 10,
+  )
+
+# Evaluate accuracy of KNN classifiers
+knn_fit <-
+  train(
+    as.factor(above_median_cust_affected) ~ .,
+    method = "knn",
+    # Limit to k = sqrt(n)
+    tuneGrid = expand.grid(k = 1:sqrt(nrow(acs_outages_class))),
+    trControl = knn_control,
+    metric = "Accuracy",
+    data = acs_outages_class 
+  )
+```
+
+```{r}
+# create confusion matrix
+confusionMatrix(knn_fit)
+```
+
+
+```{r}
+# calculate mean 0-1 loss
+base_01_loss <- 
+  (confusion_matrix[1,2] + confusion_matrix[2,1]) / nrow(acs_outages_class)
+base_01_loss
+```
+
+The mean 0-1 loss is about 0.19.
+
+```{r, warning=FALSE, message=FALSE}
+# Plot ROC Curve
+roc(
+  above_median_cust_affected ~ logit_mod$fitted.values, 
+  data = acs_outages_class, 
+  plot = TRUE,
+  main = "Baseline ROC Curve",
+  col= "blue"
+)
+```
+
+```{r, warning=FALSE, message=FALSE}
+# determine AUC
+auc(
+  above_median_cust_affected ~ logit_mod$fitted.values, 
+  data = acs_outages_class
+)
+```
 
 ```{r}
 set.seed(243)
