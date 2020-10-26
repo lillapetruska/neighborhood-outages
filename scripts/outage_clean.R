@@ -50,6 +50,7 @@ setwd(homedir)
 outages <- read_csv(paste0(homedir, workdir, "outages_expanded.csv"))
 power_lines <- 
   st_read(paste0(homedir, workdir, "California_Electric_Transmission_Lines.shp"))
+
 # Parameters:
 
 # Main Script -------------------------------------------------------------
@@ -85,45 +86,54 @@ outages_filter <-
     GEOID, outage_duration_hr = possible_duration_hours, mean_cust_affected
   )
 
-# Clean up power lines data
-power_lines_intersect <-
-  power_lines %>% 
-  # filter to PG&E
-  filter(Owner == "PG&E") %>% 
-  st_as_sf() %>% 
-  st_transform(crs = st_crs(ca_tracts)) %>% 
-  # join to CA block groups
-  st_intersection(ca_tracts)
-
-geoid_lengths <-
-  tapply(st_length(power_lines_intersect), power_lines_intersect$GEOID, sum) %>% 
-  as.data.frame() %>% 
-  rownames_to_column(var = "GEOID") %>% 
-  as_tibble() %>% 
-  mutate(line_length_km = `.` / 1000.0) %>% 
-  select(GEOID, line_length_km) %>% 
-  group_by(GEOID) %>% 
-  summarise(line_length_km = sum(line_length_km))
-
-# Join to outages data
-outages_grouped <-
-  outages_filter %>%
-  group_by(GEOID) %>%
-  summarise(
-    median_outage_duration_hr = median(outage_duration_hr),
-    median_mean_cust_affected = median(mean_cust_affected),
-    num_outages = n()
-  ) %>%
-  ungroup() %>%
-  mutate(
-    above_median_cust_affected =
-      if_else(
-        median_mean_cust_affected > median(median_mean_cust_affected), 1, 0
-      )
-  ) %>%
-  # remove median of mean customers affected column
-  select(-median_mean_cust_affected) %>%  
-  left_join(geoid_lengths, by = "GEOID")
+# # Clean up power lines data
+# power_lines_join <-
+#   power_lines %>% 
+#   # filter to PG&E
+#   filter(Owner == "PG&E") %>% 
+#   st_as_sf() %>% 
+#   st_transform(crs = st_crs(ca_tracts)) %>% 
+#   # join to CA block groups
+#   st_join(ca_tracts)
+# 
+# power_lines_intersect <-
+#   power_lines %>% 
+#   # filter to PG&E
+#   filter(Owner == "PG&E") %>% 
+#   st_as_sf() %>% 
+#   st_transform(crs = st_crs(ca_tracts)) %>% 
+#   # join to CA block groups
+#   st_intersection(ca_tracts)
+# 
+# geoid_lengths <-
+#   tapply(st_length(power_lines_intersect), power_lines_intersect$GEOID, sum) %>% 
+#   as.data.frame() %>% 
+#   rownames_to_column(var = "GEOID") %>% 
+#   as_tibble() %>% 
+#   mutate(line_length_km = `.` / 1000.0) %>% 
+#   select(GEOID, line_length_km) %>% 
+#   group_by(GEOID) %>% 
+#   summarise(line_length_km = sum(line_length_km))
+# 
+# # Join to outages data
+# outages_grouped <-
+#   outages_filter %>%
+#   group_by(GEOID) %>%
+#   summarise(
+#     median_outage_duration_hr = median(outage_duration_hr),
+#     median_mean_cust_affected = median(mean_cust_affected),
+#     num_outages = n()
+#   ) %>%
+#   ungroup() %>%
+#   mutate(
+#     above_median_cust_affected =
+#       if_else(
+#         median_mean_cust_affected > median(median_mean_cust_affected), 1, 0
+#       )
+#   ) %>%
+#   # remove median of mean customers affected column
+#   select(-median_mean_cust_affected) %>%  
+#   left_join(geoid_lengths, by = "GEOID")
 
 # Remove unnecessary objects
 rm(ca_tracts, outages)
