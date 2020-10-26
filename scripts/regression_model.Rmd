@@ -328,3 +328,38 @@ log_full_interact_trans_std_results <-
 
 Standardizing does not improve the model.
 
+# Ridge with 10-fold CV
+# The following functions come from the 'caret' package, see link for explanation
+#(https://stats.stackexchange.com/questions/104889/k-fold-or-hold-out-cross-validation-for-ridge-regression-using-r)
+```{r}
+ctrl <- trainControl(method = "cv", number = 5)
+
+ridge_fit <- 
+  train(
+    median_outage_duration_hr ~ . + .:., 
+    data = acs_outages_reg_transform,
+    method = 'ridge',
+    preProc = c("center", "scale"),
+    trControl = ctrl
+  )
+
+#plot(ridge_fit)
+```
+
+Ridge also did not perform well - even with the interaction model.
+
+# Trying CV on the best model
+```{r}
+# 10-fold
+lm_ctrl <- trainControl(method = "cv", number = 10)
+
+lm_fit <- 
+  train(
+    median_outage_duration_hr ~ ., 
+    data = acs_outages_reg_transform,
+    method = "lm",
+    trControl = lm_ctrl
+  )
+
+```
+
