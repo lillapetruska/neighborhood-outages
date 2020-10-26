@@ -35,6 +35,7 @@ library(kableExtra)
 library(GGally)
 library(caret)
 library(pROC)
+library(corrr)
 
 # Directories: 
 homedir <- "E:/neighborhood-outages/"
@@ -189,6 +190,32 @@ acs_outages %>%
   ) +
   theme_grey(base_size = 5)
 ```
+
+```{r}
+# find variables most correlated to each other
+# (select correlations w/ abs > .5)
+covariate_corr <-
+  acs_outages %>%
+  select(all_of(continuous_vars), all_of(outcome_vars)) %>% 
+  # drop prop owner
+  select(-prop_owner) %>% 
+  select(where(~sd(., na.rm = TRUE) > 0)) %>% 
+  correlate() %>% 
+  stretch() %>% 
+  arrange(r) %>% 
+  filter(abs(r) > .5) %>% 
+  mutate(lead_y = lead(y)) %>% 
+  filter(x != lead_y) %>% 
+  select(x, y)
+
+# reformat in formula form
+interaction_vars <-
+  covariate_corr %>% 
+  unite(col = "interact", sep = ":") %>%
+  unlist() %>% 
+  paste(collapse = " + ")
+```
+
 
 ## Median outage histogram
 ```{r}

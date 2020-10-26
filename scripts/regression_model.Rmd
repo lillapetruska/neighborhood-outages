@@ -1,0 +1,330 @@
+---
+title: Regression Model
+author: Lilla Petruska
+date: "`r Sys.Date()`"
+output: 
+  github_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE}
+# Libraries
+library(tidyverse)
+library(Hmisc)
+library(data.table)
+library(foreach)
+library(skimr)
+library(knitr)
+library(kableExtra)
+library(GGally)
+library(caret)
+library(pROC)
+library(here)
+library(glmnet)
+
+# Directories: 
+# homedir <- "E:/neighborhood-outages/"
+# workdir <- "cleaned_data/"
+# savedir <- "visualizations/"
+
+# Import data: 
+acs_outages_train <- 
+  read_csv(paste0(here::here(), "/cleaned_data/acs_outages_train.csv"))
+#acs_outages_test <- read_csv("~/GitHub/neighborhood-outages/cleaned_data/acs_outages_test.csv")
+#acs_outages_whole <- rbind(acs_outages_test, acs_outages_train)
+
+# Parameters:
+## List of outcome variables
+outcome_vars <- c("median_outage_duration_hr", "above_median_cust_affected")
+
+## List of covariates
+continuous_vars <- names(acs_outages_train %>% select(-all_of(outcome_vars), -GEOID))
+
+# Compute R^2 from true and predicted values
+eval_results <- function(model, true, predicted) {
+  model <- enquo(model)
+  SSE <- sum((predicted - true)^2)
+  SST <- sum((true - mean(true))^2)
+  R_square <- 1 - SSE / SST
+  RMSE = sqrt(SSE/length(true))
+  
+  # Model performance metrics
+  data.frame(
+    model = as_label(model),
+    RMSE = RMSE,
+    Rsquare = R_square
+  )
+}
+```
+# Predictive models
+## Regression
+### Baseline model
+
+```{r}
+# Set up data for regression (and drop NAs)
+acs_outages_reg <- 
+  acs_outages_train %>% 
+  select(-c(GEOID, above_median_cust_affected)) %>% 
+  drop_na() 
+```
+
+```{r}
+# Look at results of model
+lr_baseline <- lm(median_outage_duration_hr ~ ., data = acs_outages_reg)
+summary(lr_baseline)
+```
+
+```{r}
+# Estimate Prediction Error
+#baseline_prediction <- predict(lr_baseline, acs_outages_reg)
+baseline_results <-
+  eval_results(
+    baseline,
+    acs_outages_reg$median_outage_duration_hr,
+    lr_baseline$fitted.values
+  )
+baseline_results
+```
+
+RMSE is 4.03 and R^2 is 0.0375.
+
+### Interactions
+```{r}
+# Add all interaction terms
+lr_interactions <- lm(median_outage_duration_hr ~ . + .:., data = acs_outages_reg)
+summary(lr_interactions)
+
+# Estimate prediction error
+#interactions_predict <- predict(lr_interactions, acs_outages_reg)
+interaction_results <-
+  eval_results(
+    interaction,
+    acs_outages_reg$median_outage_duration_hr, 
+    lr_interactions$fitted.values
+  )
+```
+After adding all interaction terms, the RMSE decreases to 3.862 and the R^2 increases to 0.117.
+
+### Applying transformations
+```{r}
+# Apply transformations and try with baseline and interaction models
+acs_outages_reg_transform <- 
+  acs_outages_reg %>% 
+  mutate(
+    prop_latino = log10(prop_latino + 1),
+    prop_less_than_hs = log10(prop_less_than_hs + 1)
+  )
+
+lr_baseline_transform <- 
+  lm(
+    median_outage_duration_hr ~ ., 
+    data = acs_outages_reg_transform
+  )
+
+#baseline_prediction_transform <- predict(lr_baseline_transform, acs_outages_reg_transform)
+log_transform_results <-
+  eval_results(
+    log_transform,
+    acs_outages_reg_transform$median_outage_duration_hr,
+    lr_baseline_transform$fitted.values
+  )
+
+lr_interactions_transform <- 
+  lm(median_outage_duration_hr ~ . + .:., data = acs_outages_reg_transform)
+# interactions_predict_transform <- 
+#   predict(lr_interactions_transform, acs_outages_reg_transform)
+
+log_full_interact_transform_results <-
+  eval_results(
+    log_full_interaction_tranform,
+    acs_outages_reg_transform$median_outage_duration_hr,
+    lr_interactions_transform$fitted.values
+  )
+```
+
+After transforming the data and using a model with all interaction terms, the RMSE decreases further to 3.838 and the R^2 increases to 0.128. 
+
+### Ridge and Lasso models
+```{r}
+# Standardize 
+# pre_proc_val <- caret::preProcess(acs_outages_reg[,continuous_vars], method = c("center", "scale"))
+# 
+# acs_outages_reg[,continuous_vars] = predict(pre_proc_val, acs_outages_reg[,continuous_vars])
+# 
+# summary(acs_outages_reg)
+
+```
+
+```{r}
+# Ridge
+y <- acs_outages_reg$median_outage_duration_hr
+x <- acs_outages_reg %>% select(-median_outage_duration_hr) %>% data.matrix()
+
+lambdas <- 10^seq(3, -2, by = -.1)
+
+ridge <- glmnet(x, y, alpha = 0, lambda = lambdas, standardize = TRUE)
+summary(ridge)
+
+cv_ridge <- cv.glmnet(x, y, alpha = 0, lambda = lambdas)
+plot(cv_ridge)
+
+opt_lambda <- cv_fit$lambda.min
+opt_lambda
+```
+
+
+
+```{r}
+# This is all from the tutorial so idk if relevant.
+
+# cols_reg = names(acs_outages_reg)
+# 
+# acs_outages_test <- read_csv("~/GitHub/neighborhood-outages/cleaned_data/acs_outages_test.csv")
+# acs_outages_whole <- 
+#   rbind(acs_outages_test, acs_outages) %>% 
+#   mutate(
+#     prop_latino = log10(prop_latino + 1),
+#     prop_less_than_hs = log10(prop_less_than_hs + 1)
+#   )
+# 
+# dummies <- dummyVars(median_outage_duration_hr ~ ., data = acs_outages_whole[,cols_reg])
+# 
+# train_dummies = predict(dummies, newdata = acs_outages_reg_train[,cols_reg])
+# 
+# x = as.matrix(train_dummies)
+# y_train = acs_outages_reg_train$median_outage_duration_hr
+# 
+# lambdas <- 10^seq(2, -3, by = -.1)
+# ridge_reg = glmnet(x, y_train, nlambda = 25, alpha = 0, family = 'gaussian', lambda = lambdas)
+# 
+# summary(ridge_reg)
+
+```
+
+```{r}
+# Prediction and evaluation on train data - why is this so bad?????
+ridge_predict <- predict(ridge, s = opt_lambda, newx = x)
+eval_results(y, ridge_predict, acs_outages_reg)
+```
+
+```{r}
+# Lasso
+lambdas <- 10^seq(2, -3, by = -.1)
+
+# Setting alpha = 1 implements lasso regression
+lasso <- cv.glmnet(x, y, alpha = 1, lambda = lambdas, standardize = TRUE, nfolds = 10)
+
+# Best 
+lambda_best <- lasso$lambda.min 
+lambda_best
+```
+
+```{r}
+lasso_model <- glmnet(x, y, alpha = 1, lambda = lambda_best, standardize = TRUE)
+
+lasso_predict <- predict(lasso_model, s = lambda_best, newx = x)
+eval_results(y, lasso_predict, acs_outages_reg)
+```
+
+
+## u can take a look but its not great 
+
+```{r}
+fm_1 <- lm(median_outage_duration_hr ~ ., data = acs_outages_reg)
+
+fm_1.cv_10 = cvFit(fm_1, data = acs_outages_reg, y = acs_outages_reg$median_outage_duration_hr, K = 10, seed = 1)
+fm_1.cv_100 = cvFit(fm_1, data = acs_outages_reg, y = acs_outages_reg$median_outage_duration_hr, K = 100, seed = 1)
+
+
+fm_1.cv_10
+fm_1.cv_100
+```
+
+```{r}
+acs_outages_reg_transform <-
+  acs_outages_reg %>% 
+  mutate(
+    prop_latino = log10(prop_latino + 1),
+    prop_less_than_hs = log10(prop_less_than_hs + 1)
+  )
+
+fm_2 <- lm(median_outage_duration_hr ~ ., data = acs_outages_reg_transform)
+
+fm_2.cv_10 = cvFit(fm_2, data = acs_outages_reg, y = acs_outages_reg_transform$median_outage_duration_hr, K = 10, seed = 1)
+
+fm_2.cv_10
+
+```
+
+```{r}
+fm_3 <- lm(median_outage_duration_hr ~ . + prop_latino:prop_less_than_hs, data = acs_outages_reg_transform)
+
+fm_3.cv_10 = cvFit(fm_3, data = acs_outages_reg, y = acs_outages_reg_transform$median_outage_duration_hr, K = 10, seed = 1)
+
+fm_3.cv_10
+```
+
+
+# Matt's code
+# Attempt to be more specific with interaction terms
+```{r}
+# find variables most correlated to each other
+# (select correlations w/ abs > .5)
+covariate_corr <-
+  acs_outages_reg %>%
+  # drop prop owner
+  select(-prop_owner) %>% 
+  select(where(~sd(., na.rm = TRUE) > 0)) %>% 
+  correlate() %>% 
+  stretch() %>% 
+  arrange(r) %>% 
+  filter(abs(r) > .5) %>% 
+  mutate(lead_y = lead(y)) %>% 
+  filter(x != lead_y) %>% 
+  select(x, y)
+
+# reformat in formula form
+interaction_vars <-
+  covariate_corr %>% 
+  unite(col = "interact", sep = ":") %>%
+  unlist() %>% 
+  paste(collapse = " + ")
+
+# Pulled list of top covariates
+lr_selected_interact_transform <-
+  lm(
+    as.formula(paste("median_outage_duration_hr ~ . +", interaction_vars)),
+    data = acs_outages_reg_transform
+  )
+
+log_selected_interact_transform_results <-
+  eval_results(
+    log_selected_interact_transform,
+    acs_outages_reg_transform$median_outage_duration_hr,
+    lr_selected_interact_transform$fitted.values
+  )
+```
+
+# Standardized the best model so far
+```{r}
+acs_outages_reg_trans_std <-
+  acs_outages_reg_transform %>% 
+  mutate(across(2:ncol(.), ~scale(.)))
+
+lr_interactions_transform_std <- 
+  lm(median_outage_duration_hr ~ . + .:., data = acs_outages_reg_trans_std)
+
+log_full_interact_trans_std_results <-
+  eval_results(
+    log_full_interaction_standardized_tranform,
+    acs_outages_reg_trans_std$median_outage_duration_hr,
+    lr_interactions_transform_std$fitted.values
+  )
+```
+
+Standardizing does not improve the model.
+
