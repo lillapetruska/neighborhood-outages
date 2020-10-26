@@ -363,3 +363,77 @@ lm_fit <-
 
 ```
 
+# PCA attempt
+```{r}
+# conduct PCA (to reduce data, especially collinearity)
+
+# Find variance of each covariate
+train_col_var <- 
+  acs_outages_reg %>% 
+  select(-median_outage_duration_hr) %>% 
+  mutate(across(everything(), stats::var)) %>% 
+  distinct() %>% 
+  pivot_longer(cols = everything(), names_to = "vars", values_to = "variance") %>% 
+  # filter out 0 variance covariates
+  filter(variance != 0)
+
+# remove zero variance covariates
+reg_filter <-
+  acs_outages_reg %>% 
+  # remove outcome var as well
+  select(all_of(train_col_var$vars))
+
+# Run PCA
+pca_reg <- prcomp(reg_filter, scale = T, center = T)
+summary(pca_reg)
+```
+
+```{r}
+# compute standard deviation of each principal component
+std_dev <- pca_reg$sdev
+# compute variance
+pr_var <- std_dev^2
+# proportion of variance explained
+prop_var <- pr_var/sum(pr_var)
+
+# generate scree plot
+plot(
+  prop_var, 
+  xlab = "Principal Component",
+  ylab = "Proportion of Variance Explained",
+  type = "b"
+)
+```
+Around 16 components explains about 98% of variance.
+
+```{r}
+# PCA results
+pca_table <- 
+  data.frame(
+    median_outage_duration_hr = acs_outages_reg[,1] %>% pull(), pca_reg$x
+  ) %>% 
+  #filter to the first 16 components
+  select(median_outage_duration_hr:PC16) %>% 
+  bind_cols()
+```
+
+```{r}
+# Do 10-fold CV KNN
+set.seed(243)
+# Set train control
+reg_control <- 
+  trainControl(
+    method = "cv", 
+    number = 10
+  )
+
+# Evaluate accuracy of KNN classifiers
+reg_fit <-
+  train(
+    median_outage_duration_hr ~ .,
+    method = "lm",
+    trControl = reg_control,
+    data = pca_table
+  )
+reg_fit
+```

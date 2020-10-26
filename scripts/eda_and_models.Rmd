@@ -203,17 +203,18 @@ covariate_corr <-
   correlate() %>% 
   stretch() %>% 
   arrange(r) %>% 
-  filter(abs(r) > .5) %>% 
-  mutate(lead_y = lead(y)) %>% 
-  filter(x != lead_y) %>% 
-  select(x, y)
+  filter(abs(r) > .5) 
 
 # reformat in formula form
 interaction_vars <-
   covariate_corr %>% 
+  mutate(lead_y = lead(y)) %>% 
+  filter(x != lead_y) %>% 
+  select(x, y) %>% 
   unite(col = "interact", sep = ":") %>%
   unlist() %>% 
   paste(collapse = " + ")
+covariate_corr
 ```
 
 
@@ -283,6 +284,7 @@ acs_outages %>%
   geom_point(alpha = .4) +
   geom_smooth()
 ```
+
 ```{r}
 acs_outages %>% 
   ggplot(
@@ -573,8 +575,7 @@ train_col_var <-
 class_filter <-
   acs_outages_class %>% 
   # remove outcome var as well
-  select(all_of(train_col_var$vars))
-
+  select(all_of(train_col_var$vars)) 
 # Run PCA
 pca <- prcomp(class_filter, scale = T, center = T)
 summary(pca)
