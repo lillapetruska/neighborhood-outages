@@ -50,7 +50,8 @@ acs_outages <-
 outcome_vars <- c("median_outage_duration_hr", "above_median_cust_affected")
 
 ## List of covariates
-continuous_vars <- names(acs_outages %>% select(-all_of(outcome_vars)))
+continuous_vars <- 
+  names(acs_outages %>% select(-c(all_of(outcome_vars), GEOID)))
 ```
 
   
@@ -104,9 +105,7 @@ No NULL values.
 corr_matrix <- 
   acs_outages %>%
   select(all_of(continuous_vars), all_of(outcome_vars)) %>% 
-  select(where(~sd(., na.rm = TRUE) > 0)) %>% 
-  #select out GEOID
-  select(-GEOID)
+  select(where(~sd(., na.rm = TRUE) > 0))
 
 # create correlation matrix
 corr_matrix <- rcorr(as.matrix(corr_matrix)) 
@@ -487,35 +486,47 @@ confusion_matrix
 ```
 
 ```{r}
-# calculate mean 0-1 loss
-base_01_loss <- 
-  (confusion_matrix[1,2] + confusion_matrix[2,1]) / nrow(acs_outages_class)
-base_01_loss
-```
+# calculate confusion matrix scores
+tn <- confusion_matrix[1,1]
+fn <- confusion_matrix[2,1]
+fp <- confusion_matrix[1,2]
+tp <- confusion_matrix[2,2]
 
-The mean 0-1 loss is about 0.19.
+base_01_loss <- (fp + fn) / nrow(acs_outages_class)
+base_sensitivity <- tp / (fn + tp)
+base_specificity <- tn / (tn + fp)
+base_precision <- tp / (tp + fp)
+base_typeI_error <- fp / (tn + fp)
+base_typeII_error <- fn / (fn + tp)
+base_false_discovery <- fp / (tp + fp)
+```
 
 ```{r, warning=FALSE, message=FALSE}
 # Plot ROC Curve
 roc(
-  above_median_cust_affected ~ logit_mod$fitted.values, 
+  response = acs_outages_class$above_median_cust_affected,
+  predictor = logit_mod$fitted.values, 
   data = acs_outages_class, 
   plot = TRUE,
-  main = "Baseline ROC Curve",
-  col= "blue"
+  main = "Baseline ROC",
+  col = "blue"
 )
 ```
 
 ```{r, warning=FALSE, message=FALSE}
 # determine AUC
 auc(
-  above_median_cust_affected ~ logit_mod$fitted.values, 
+  response = acs_outages_class$above_median_cust_affected,
+  predictor = logit_mod$fitted.values,  
   data = acs_outages_class
 )
 ```
 
-Major goal is optimize mean 0-1 loss. Want high sensitivity, but also want to
-generate as high specificity as possible (and reduce Type II error rate).
+Major goal is optimize mean 0-1 loss and increase sensitivity. Logistic model is
+a good baseline, but I want to see if I can improve those metrics. Will use PCA
+to reduce covariates and eliminate some of the collinearity noticed in EDA. 
+Then I'll take the factor loadings to conduct KNN classification. Will do a
+10-fold cross-validation to ensure robustness of approach.
 
 ### Final model (PCA-based K-nearest neighbors algorithm)
 ```{r}
@@ -567,7 +578,7 @@ pca_table <-
     above_median_cust_affected = acs_outages_class[,1] %>% pull(), pca$x
   ) %>% 
   #filter to the first 16 components
-  select(above_median_cust_affected:PC18) %>% 
+  select(above_median_cust_affected:PC16) %>% 
   bind_cols()
 ```
 
@@ -578,7 +589,7 @@ set.seed(243)
 knn_control <- 
   trainControl(
     method = "cv", 
-    number = 10,
+    number = 10
   )
 
 # Evaluate accuracy of KNN classifiers
@@ -587,142 +598,85 @@ knn_fit <-
     as.factor(above_median_cust_affected) ~ .,
     method = "knn",
     # Limit to k = sqrt(n)
-    tuneGrid = expand.grid(k = 1:sqrt(nrow(acs_outages_class))),
+    tuneGrid = expand.grid(k = 1:sqrt(nrow(pca_table))),
     trControl = knn_control,
     metric = "Accuracy",
-    data = acs_outages_class 
+    data = pca_table
   )
 ```
 
 ```{r}
 # create confusion matrix
-confusionMatrix(knn_fit)
-```
-
-
-```{r}
-# calculate mean 0-1 loss
-base_01_loss <- 
-  (confusion_matrix[1,2] + confusion_matrix[2,1]) / nrow(acs_outages_class)
-base_01_loss
-```
-
-The mean 0-1 loss is about 0.19.
-
-```{r, warning=FALSE, message=FALSE}
-# Plot ROC Curve
-roc(
-  above_median_cust_affected ~ logit_mod$fitted.values, 
-  data = acs_outages_class, 
-  plot = TRUE,
-  main = "Baseline ROC Curve",
-  col= "blue"
-)
-```
-
-```{r, warning=FALSE, message=FALSE}
-# determine AUC
-auc(
-  above_median_cust_affected ~ logit_mod$fitted.values, 
-  data = acs_outages_class
-)
-```
-
-```{r}
-set.seed(243)
-# create training and validation sets
-class_validation <- 
-  acs_outages_class %>% 
-  mutate(
-    rowid = row_number(),
-    # convert 1/0 to Yes/No
-    above_median_cust_affected =
-      if_else(above_median_cust_affected == 1, "Yes", "No")
-  ) %>% 
-  slice_sample(prop = .2)
-
-class_train <- 
-  acs_outages_class %>% 
-  mutate(
-    rowid = row_number(),
-    # convert 1/0 to Yes/No
-    above_median_cust_affected =
-      if_else(above_median_cust_affected == 1, "Yes", "No")
-  ) %>%
-  filter(!(rowid %in% class_validation$rowid)) %>% 
-  select(-rowid)
-
-class_validation <- class_validation %>% select(-rowid)
-
-# Extract outcome variable for 'cl' argument
-target_category <- class_train$above_median_cust_affected
-# Extract outcome variable to measure accuracy
-test_category <- class_validation$above_median_cust_affected
-```
-
-```{r}
-set.seed(243)
-# Set to 10-fold CV
-train_control <- 
-  trainControl(
-    method = "cv",
-    number = 10, 
-    classProbs = TRUE,
-    summaryFunction = twoClassSummary
-  )
-
-# Evaluate accuracy of KNN classifiers
-class_fit <-
-  train(
-    as.factor(above_median_cust_affected) ~ .,
-    method = "knn",
-    # Limit to k = sqrt(n)
-    tuneGrid = expand.grid(k = 1:sqrt(nrow(acs_outages_class))),
-    trControl = train_control,
-    metric = "ROC",
-    data = class_train 
-  )
-```
-
-```{r}
-# Plot results of fitted KNN model
-plot(class_fit, print.thres = 0.5, type = "S")
-```
-
-
-```{r}
-# Create confusion matrix
-confusion_matrix_knn <- table(knn_mod, test_category)
-rownames(confusion_matrix_knn) <- c("Obs. 0", "Obs. 1")
-colnames(confusion_matrix_knn) <- c("Pred. 0", "Pred. 1")
+confusion_matrix_knn <- confusionMatrix(knn_fit, positive = 1)
+confusion_matrix_knn <- confusion_matrix_knn$table %>% t()
 confusion_matrix_knn
 ```
 
+
 ```{r}
-# calculate True Positive Rate
-model_tpr <- 
-  confusion_matrix_knn[2,2] / 
-  (confusion_matrix_knn[2,1] + confusion_matrix_knn[2,2])
-model_tpr
+# calculate confusion matrix scores
+tn <- confusion_matrix_knn[1,1]
+fn <- confusion_matrix_knn[2,1]
+fp <- confusion_matrix_knn[1,2]
+tp <- confusion_matrix_knn[2,2]
+
+final_01_loss <- (fp + fn) / nrow(acs_outages_class)
+final_sensitivity <- tp / (fn + tp)
+final_specificity <- tn / (tn + fp)
+final_precision <- tp / (tp + fp)
+final_typeI_error <- fp / (tn + fp)
+final_typeII_error <- fn / (fn + tp)
+final_false_discovery <- fp / (tp + fp)
 ```
 
-
-
 ```{r}
+# confusion matrix comparison
+confusion_matrix_comparison <-
+  tibble(
+    metric =
+      c("Mean 0-1 Loss", "Precision", "Sensitivity", "Specificity",
+        "Type I Error Rate", "Type II Error Rate", "False Discovery Rate"),
+    base = 
+      c(base_01_loss, base_precision, base_sensitivity, base_specificity,
+        base_typeI_error, base_typeII_error, base_false_discovery),
+    final = 
+      c(final_01_loss, final_precision, final_sensitivity, final_specificity,
+        final_typeI_error, final_typeII_error, final_false_discovery)
+  ) %>% 
+  kable(caption = "Above Median Customer Affected Confusion Matrix Metrics") %>% 
+  kableExtra::kable_classic() %>% 
+  #format for markdown
+  kable_styling(latex_options="scale_down")
+confusion_matrix_comparison
+```
+
+Some metrics take a hit (like precision and specificity), but Sensitivity
+increased a good deal and the Mean 0-1 Loss improved as well - which were our 
+choice outcomes. Want the model to detect as many true positives as possible.
+
+```{r, warning=FALSE, message=FALSE}
 # Plot ROC Curve
 roc(
-  above_median_cust_affected ~ as.numeric(knn_pred), 
-  data = acs_outages_class, 
+  response = pca_table$above_median_cust_affected,
+  predictor = as.numeric(predict(knn_fit)), 
+  data = pca_table, 
   plot = TRUE,
-  main = "ROC Curve",
-  col= "blue"
+  main = "Final ROC",
+  col = "blue"
 )
 ```
 
 ```{r, warning=FALSE, message=FALSE}
 # determine AUC
 auc(
-  above_median_cust_affected ~ logit_mod$fitted.values, 
-  data = acs_outages_class
+  response = pca_table$above_median_cust_affected,
+  predictor = as.numeric(predict(knn_fit)),  
+  data = pca_table
 )
 ```
+
+Clearly AUC and ROC take a hit, but this was not the goal of the model. Wanted 
+to reduce mean 0-1 loss and increase sensitivity above all. This model is likely
+biased, but the flag only appears 20% of the time I believe such bias is justified.
+This is especially true because I wanted to optimize the sensitivity and accuracy 
+of the model.
