@@ -41,6 +41,8 @@
 
 # 10/24/20 - added density metric using ALAND variable
 
+# 10/26/20 - added urban/rural proportions using Decennial 2010
+
 # Setup -------------------------------------------------------------------
 # Packages: 
 library(tidyverse)
@@ -63,6 +65,7 @@ setwd(homedir)
 
 # Load available variables for 2018 ACS
 acs_vars <- load_variables(year = 2018, dataset = "acs5", cache = TRUE)
+dec_vars <- load_variables(year = 2010, dataset = "sf1", cache = TRUE)
 
 # load land area for each census tract
 ca_land_area <- 
@@ -325,13 +328,36 @@ acs_tenure <-
   # select for just tract ID, total population, and proportions
   select(GEOID, starts_with("prop"))
 
+## Urban and rural population
+dec_urban <-
+  get_decennial(
+    geography = "tract",
+    variables = c("P002001", "P002002", "P002005"),
+    year = 2010,
+    cache_table = TRUE,
+    state = "CA"
+  ) %>% 
+  left_join(dec_vars, by = c("variable" = "name")) %>% 
+  select(GEOID, label, value) %>% 
+  mutate(
+    # convert names to better form
+    label = str_to_lower(str_replace_all(label, "!!|\\s+", "_"))
+  ) %>% 
+  pivot_wider(names_from = label, values_from = value) %>% 
+  mutate(
+    prop_urban = total_urban / total,
+    prop_rural = total_rural / total
+  ) %>% 
+  select(GEOID, prop_rural, prop_urban)
+
 # Merge all ACS data
 acs_merged <-
   acs_race %>% 
   left_join(acs_income, by = "GEOID") %>% 
   left_join(acs_education, by = "GEOID") %>% 
   left_join(acs_tenure, by = "GEOID") %>% 
-  left_join(acs_vacancy, by = "GEOID")
+  left_join(acs_vacancy, by = "GEOID") %>% 
+  left_join(dec_urban)
 
 # Save Results ------------------------------------------------------------
 write_csv(
@@ -341,5 +367,5 @@ write_csv(
 
 rm(
   acs_education, acs_income, acs_merged, acs_race, acs_tenure, 
-  acs_vacancy, acs_vars, ca_land_area
+  acs_vacancy, acs_vars, ca_land_area, dec_urban, dec_vars
 )

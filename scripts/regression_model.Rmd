@@ -328,7 +328,7 @@ log_full_interact_trans_std_results <-
 
 Standardizing does not improve the model.
 
-# Ridge with 10-fold CV
+# Ridge with 5-fold CV
 # The following functions come from the 'caret' package, see link for explanation
 #(https://stats.stackexchange.com/questions/104889/k-fold-or-hold-out-cross-validation-for-ridge-regression-using-r)
 ```{r}
@@ -369,7 +369,7 @@ lm_fit <-
 
 # Find variance of each covariate
 train_col_var <- 
-  acs_outages_reg %>% 
+  acs_outages_reg_trans_std %>% 
   select(-median_outage_duration_hr) %>% 
   mutate(across(everything(), stats::var)) %>% 
   distinct() %>% 
@@ -379,7 +379,7 @@ train_col_var <-
 
 # remove zero variance covariates
 reg_filter <-
-  acs_outages_reg %>% 
+  acs_outages_reg_trans_std %>% 
   # remove outcome var as well
   select(all_of(train_col_var$vars))
 
@@ -404,16 +404,16 @@ plot(
   type = "b"
 )
 ```
-Around 16 components explains about 98% of variance.
+Around 17 components explains about 98% of variance.
 
 ```{r}
 # PCA results
 pca_table <- 
   data.frame(
-    median_outage_duration_hr = acs_outages_reg[,1] %>% pull(), pca_reg$x
+    median_outage_duration_hr = acs_outages_reg_trans_std[,1] %>% pull(), pca_reg$x
   ) %>% 
-  #filter to the first 16 components
-  select(median_outage_duration_hr:PC16) %>% 
+  #filter to the first 17 components
+  select(median_outage_duration_hr:PC17) %>% 
   bind_cols()
 ```
 
@@ -430,7 +430,7 @@ reg_control <-
 # Evaluate accuracy of KNN classifiers
 reg_fit <-
   train(
-    median_outage_duration_hr ~ .,
+    median_outage_duration_hr ~ . + .:.,
     method = "lm",
     trControl = reg_control,
     data = pca_table
