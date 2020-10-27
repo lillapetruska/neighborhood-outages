@@ -3,6 +3,7 @@ output: pdf_document
 header-includes:
 - \usepackage{booktabs}
 - \usepackage{sectsty} \allsectionsfont{\centering}
+- \usepackage{indentfirst}
 urlcolor: blue
 indent: true
 ---
@@ -347,6 +348,8 @@ acs_outages_class <-
   ) %>% 
   drop_na() 
 ```
+
+\newpage
 
 ## Appendix B - Prediction Models{#appendixB}
 This appendix provides the code used to develop both the regression and classification models.
@@ -765,6 +768,8 @@ biased, but the flag only appears 20% of the time I believe such bias is justifi
 This is especially true because I wanted to optimize the sensitivity and accuracy 
 of the model.
 
+\newpage
+
 ## Appendix C - Data Processing{#appendixC}
 This appendix provides the scripts used in processing, cleaning, and merging data.
 
@@ -1098,6 +1103,8 @@ rm(
 )
 ```
 
+\newpage
+
 ### Outage Clean Script
 ```{r, eval=FALSE}
 # Setup -------------------------------------------------------------------
@@ -1161,6 +1168,8 @@ write_csv(
   file = paste0(homedir, savedir, "outages_clean.csv")
 )
 ```
+
+\newpage
 
 ### ACS and Outage Merge Script
 ```{r, eval=FALSE}
@@ -1265,6 +1274,8 @@ write_csv(
 
 rm(non_outage_tracts, acs_outages_test, acs_outages_train)
 ```
+
+\newpage
 
 ## Appendix D - EDA{#appendixD}
 This appendix provides all the EDA conducted prior to model building.
