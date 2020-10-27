@@ -1,0 +1,1672 @@
+---
+output: pdf_document
+header-includes:
+- \usepackage{booktabs}
+- \usepackage{sectsty} \allsectionsfont{\centering}
+urlcolor: blue
+indent: true
+---
+
+Matt Alvarez-Nissen and Lilla Petruska
+
+MS&E 226
+
+`r format(Sys.time(), "%m/%d/%Y")`
+
+\allsectionsfont{\centering} 
+## MS&E 226 Project Part 1 - Neighborhood Outages
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+# Please exclude this page from page count
+# Libraries
+library(tidyverse)
+library(Hmisc)
+library(data.table)
+library(foreach)
+library(skimr)
+library(knitr)
+library(kableExtra)
+library(GGally)
+library(caret)
+library(pROC)
+library(here)
+library(glmnet)
+library(corrr)
+library(elasticnet)
+library(cvTools)
+
+# Load Data
+acs_outages <- read_csv(paste0(here::here(), "/cleaned_data/acs_outages_train.csv"))
+
+# Parameters
+lambdas <- 10^seq(3, -2, by = -.1)
+## List of outcome variables
+outcome_vars <- c("median_outage_duration_hr", "above_median_cust_affected")
+
+
+
+## List of covariates
+continuous_vars <-
+  names(acs_outages %>% select(-c(all_of(outcome_vars), GEOID)))
+
+# Functions
+eval_results <- function(model, true, predicted) {
+  model <- enquo(model)
+  SSE <- sum((predicted - true)^2)
+  SST <- sum((true - mean(true))^2)
+  R_square <- 1 - SSE / SST
+  RMSE = sqrt(SSE/length(true))
+
+  # Model performance metrics
+  data.frame(
+    model = as_label(model),
+    RMSE = RMSE,
+    Rsquare = R_square
+  )
+}
+```
+
+```{r, echo=FALSE}
+# Ignore this chunk for now
+# Regression df
+reg_train <-
+  acs_outages %>%
+  select(-c(GEOID, above_median_cust_affected, prop_white, prop_eli, prop_college, prop_owner, rental_vacancy_rate, prop_rural)) %>%
+  drop_na()
+
+# Classification df
+# Set up data for classification (and drop NAs)
+acs_outages_class <- 
+  acs_outages %>% 
+  select(
+    -c(GEOID, median_outage_duration_hr)
+  ) %>% 
+  drop_na() 
+```
+
+
+Pacific Gas & Electric (PG&E) has made headlines over the last few years, largely due to blame over faulty equipment deemed responsible for sparking California’s worst wildfires in that time. As a result, the utility company has imposed “public safety power shutoffs” in the wake of dangerous fire conditions to reduce the possibility of their equipment contributing to any new wildfires. It is also common for communities to experience power shutoffs during distant wildfires or shortly after they start as they might prevent their spread. For our project, we investigate these PG&E outages and what factors influence their scope (temporally and spatially). Specifically, are there factors in communities that impact PG&E’s service to its customers and response to such power outages?
+
+### Investigating the data
+By combining data on PG&E outages with demographic information, we hope to answer some questions about which characteristics within Census tracts are associated with the duration and extent of power outages. Are there certain racial, socioeconomic, or educational attainment indicators within communities that influence PG&E’s response time to outages? Does PG&E’s performance show neglect for its customers in certain Census tracts? Is median duration per tract higher if there is a higher proportion of non-white residents? Given the contentious nature of PG&E's performance over the last few years, it is especially relevant now to understand how their electricity system infrastructure impacts Californians and it is imperative that we focus this investigation through the lens of equity. Predicting characteristics about PG&E’s outage will be increasingly important in the future as wildfires become more frequent and severe. Understanding what impacts outage duration and extent can give us insights into which populations might be vulnerable to being left without power for longer periods of time and thus inform decisions about where energy infrastructure may need to be updated and strengthened in preparation for times of crises.
+
+Our dataset combines data from three sources: the United States Census Bureau’s 2018 American Community Survey, the 2010 Decennial Census urban-rural classification of Census tracts, and PG&E electricity outage data for the last year (found [here](https://simonwillison.net/2019/Oct/10/pge-outages/)). The first provides demographic data at the Census tract level in California, including information on race, population density, income level, educational attainment, tenure (homeowner vs renter), and home vacancy rates. The second gives information about urban versus rural land use in tracts. The third was scraped from PG&E directly by Simon WIllison and contains information on outage duration, location, and customers affected. By georeferencing each outage, we were able to calculate a set of summary statistics of PG&E outages for each Census tract that is within PG&E’s service area. Our dataset for analysis is the result of joining these three separate datasets, giving us demographic, land use, and outage data for 2722 Census tracts in California.
+
+We have a few concerns about the quality of our data, including that the location data PG&E provides is only a single coordinate for each outage, and thus there is not reliable information concerning the extent of the entire affected outage area. Additionally, PG&E does not provide a data dictionary, so we must infer what the different variables mean based on their names. Another issue in the structure of the data is that While PG&E serves a majority of Northern California, the geography has an incredibly diverse demographic and environmental makeup. Our random train-test split hopefully accounted for variation across the Census tracts, but there is a possibility that the tracts within each of these groups share similar characteristics. Finally, our data had relatively few observations, as we only consider the Census tracts with outages. We deemed this, as opposed to including all Census tracts in California, the more appropriate subset to analyze. Given that PG&E's service area is restricted, we felt including all Census tracts would unfairly weight the `0` observations for our outcome variables. We realize, however, that this must introduce some selection bias. If allowed more time, we would also deploy our models on the entirety of PG&E's service area (which was not immediately available).
+
+Data processing was a three step process, requiring Census data cleaning, PG&E data cleaning, and merging. 2018 ACS measurements for race, population density, income (as percentage of Area Median Income) level, educational attainment, tenure (homeowner vs renter), and home vacancy rates were calculated as proportions. Additionally, we used 2010 Decennial Census (the most recent data available) to determine the proportion of the population classified as urban or rural. We removed one covariate from each of category to reduce issues with collinearity in the regression model. The `tigris` and `tidycensus` packages were used to gather and clean all Census data. Outage data was taken from Simon Willison's PG&E [scraper](https://simonwillison.net/2019/Oct/10/pge-outages/), and was filtered to only include outages that were over. There is about a year of data, from October 2019 - October 2020. Mean customers affected was derived by taking the average of `min_estCustAffected` and `max_estCustAffected`, and `possible_duration_hours` was used as a measure of outage duration in hours. This data was georeferenced to Census tracts using latitude and longitude, with help from the `tigris` and `sf` packages. ACS and outage data were then merged by grouping outage data by tract, after determining median outage duration, median customers affected, and total number of outages by tract. A binary flag was generated to note if a tract had above median customers affected by outages. We also generated a density statistic for outages per square km. Full data cleaning scripts are available in [Appendix C](#appendixC).
+
+Our continuous response variable is the median outage duration (hours) in each Census tract. We chose this variable because it may serve as a proxy for PG&E service quality (how fast PG&E can bring power back on for communities). Our binary response variable determines if the number of customers affected by outages within a Census tract is above the median. We chose this because it may help us understand what kind of neighborhoods are more heavily impacted by these power outages.
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE, out.height="20%"}
+covariate_corr <-
+  acs_outages %>%
+  select(all_of(continuous_vars), all_of(outcome_vars)) %>%
+  # drop prop owner
+  select(-prop_owner) %>%
+  select(where(~sd(., na.rm = TRUE) > 0)) %>%
+  correlate() %>%
+  stretch() %>%
+  arrange(r) %>%
+  # adjusted parameter for report table
+  filter(abs(r) > .6) %>%
+  mutate(lead_y = lead(y)) %>%
+  filter(x != lead_y) %>%
+  select(covariate_1 = x, covariate_2 = y, correlation = r)
+
+covariate_corr %>%
+  slice(-1) %>%
+  kable(caption = "Very High Correlations Amongst Covariates") %>%
+  kableExtra::kable_classic() %>%
+  #format for markdown
+  kable_styling(latex_options="scale_down", font_size = 2)
+```
+
+After exploring our data, it became clear to us that correlations between covariates would be a major issue to consider, especially given the high correlation between variables like education and race. For the regression model, we thus decided to include interaction terms in our data to capture this relationship. We also included log transformations on variables following a chi-squared distribution, including proportion Latino and proportion with less than a high school education. There were also a handful (about 15) Census tracts that contained `NA` values, and most of those with `NA`s did not have other useful information so we decided to drop them. Finally, our EDA let us see some interesting patterns concerning race, education, and tenure especially. As median outage duration increased, the proportion of white residents, college-educated residents, and owners decreased. These patterns demonstrated to us that our data had at least some worthwhile predictive power. These plots are included in [Appendix D](#appendixD).
+
+### Predictions
+Here we will discuss the general modeling process and decisions made in creating both regression and classification models. The full process and code can be found in [Appendix B](#appendixB).
+
+@Lilla - discuss regression model here
+
+In classification, our major goal was to identify as many true positives as possible, because we wanted a model optimized for proactive decision-making. In other words, we were fine with relatively higher false positives, because the model is designed to give warning to particular neighborhood types if they are at higher risk of having high numbers of customers affected by outages. As such our major goals were to reduce mean 0-1 loss and increase sensitivity.
+
+For a baseline, we used a logistic regression of the model including all covariates. This performed fairly well, with a mean 0-1 loss of about .193 and sensitivity of .067. However, given the issues of collinearity pointed out before, we wanted to see if we could develop a better model that reduced these issues. Thus, we used Principal Components Analysis (PCA) to reduce the covariates, and chose to include the first 7 components (which explained about 70% of the variance). Next, we used K-nearest neighbors (KNN) on those first 7 components, and did a 10-fold cross-validation to derive the optimal K (which was 37). Using confusion matrices, we then produced a comparative table between the two models (shown in Table 2). Mean 0-1 loss greatly improved, now about .009 while sensitivity increased to about .095. Obviously other metrics took a hit, including AUC, specificity, and precision. For the purposes of our model though, this was deemed acceptable.
+
+Overall, there is reason to believe that our model is overly optimistic and biased. While CV was employed to reduce this possibility, the relatively low explanatory power of our covariates make this more likely. Additionally, the number of components chosen was relatively arbitrary. 7 components occurred after the break in the scree plots, but was chosen because it explained an acceptable amount the variance. KNN might have also been a suboptimal classification approach. However, given the constraints of our data, we were content with the KNN model. We felt it made use of the highest explanatory power of the data without overfitting to noise excessively. Hopefully this remains true when we deploy it on the test set.
+
+```{r,echo=FALSE}
+# Look at results of the model
+logit_mod <-
+  glm(
+    above_median_cust_affected ~ .,
+    data = acs_outages_class, 
+    family = binomial
+  )
+```
+
+```{r, echo=FALSE}
+# Create confusion matrix
+pred <- 
+  if_else(logit_mod$fitted.values > 0.5, "1", "0")
+
+confusion_matrix <-
+  table(acs_outages_class$above_median_cust_affected, pred)
+rownames(confusion_matrix) <- c("Obs. 0", "Obs. 1")
+colnames(confusion_matrix) <- c("Pred. 0", "Pred. 1")
+```
+
+```{r, echo=FALSE}
+# calculate confusion matrix scores
+tn <- confusion_matrix[1,1]
+fn <- confusion_matrix[2,1]
+fp <- confusion_matrix[1,2]
+tp <- confusion_matrix[2,2]
+
+base_01_loss <- (fp + fn) / nrow(acs_outages_class)
+base_sensitivity <- tp / (fn + tp)
+base_specificity <- tn / (tn + fp)
+base_precision <- tp / (tp + fp)
+base_typeI_error <- fp / (tn + fp)
+base_typeII_error <- fn / (fn + tp)
+base_false_discovery <- fp / (tp + fp)
+```
+
+```{r, echo=FALSE}
+# conduct PCA (to reduce data, especially collinearity)
+# Find variance of each covariate
+train_col_var <- 
+  acs_outages_class %>% 
+  select(-above_median_cust_affected) %>% 
+  mutate(across(everything(), stats::var)) %>% 
+  distinct() %>% 
+  pivot_longer(cols = everything(), names_to = "vars", values_to = "variance") %>% 
+  # filter out 0 variance covariates
+  filter(variance != 0)
+
+# remove zero variance covariates
+class_filter <-
+  acs_outages_class %>% 
+  # remove outcome var as well
+  select(all_of(train_col_var$vars))
+
+# Run PCA
+pca <- prcomp(class_filter, scale = T, center = T)
+```
+
+```{r, echo=FALSE}
+# PCA results
+pca_table <- 
+  data.frame(
+    above_median_cust_affected = acs_outages_class[,1] %>% pull(), pca$x
+  ) %>% 
+  #filter to the first 7 components
+  select(above_median_cust_affected:PC7) %>% 
+  bind_cols()
+```
+
+```{r,echo=FALSE}
+# Do 10-fold CV KNN
+set.seed(243)
+# Set train control
+knn_control <- 
+  trainControl(
+    method = "cv", 
+    number = 10
+  )
+
+# Evaluate accuracy of KNN classifiers
+knn_fit <-
+  train(
+    as.factor(above_median_cust_affected) ~ .,
+    method = "knn",
+    # Limit to k = sqrt(n)
+    tuneGrid = expand.grid(k = 1:sqrt(nrow(pca_table))),
+    trControl = knn_control,
+    metric = "Accuracy",
+    data = pca_table
+  )
+```
+
+```{r, echo=FALSE}
+# create confusion matrix
+confusion_matrix_knn <- confusionMatrix(knn_fit, positive = 1)
+confusion_matrix_knn <- confusion_matrix_knn$table %>% t()
+```
+
+```{r, echo=FALSE}
+# calculate confusion matrix scores
+tn <- confusion_matrix_knn[1,1]
+fn <- confusion_matrix_knn[2,1]
+fp <- confusion_matrix_knn[1,2]
+tp <- confusion_matrix_knn[2,2]
+
+final_01_loss <- (fp + fn) / nrow(acs_outages_class)
+final_sensitivity <- tp / (fn + tp)
+final_specificity <- tn / (tn + fp)
+final_precision <- tp / (tp + fp)
+final_typeI_error <- fp / (tn + fp)
+final_typeII_error <- fn / (fn + tp)
+final_false_discovery <- fp / (tp + fp)
+```
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE, out.height="20%"}
+# confusion matrix comparison
+confusion_matrix_comparison <-
+  tibble(
+    metric =
+      c("Mean 0-1 Loss", "Precision", "Sensitivity", "Specificity",
+        "Type I Error Rate", "Type II Error Rate", "False Discovery Rate"),
+    base = 
+      c(base_01_loss, base_precision, base_sensitivity, base_specificity,
+        base_typeI_error, base_typeII_error, base_false_discovery),
+    final = 
+      c(final_01_loss, final_precision, final_sensitivity, final_specificity,
+        final_typeI_error, final_typeII_error, final_false_discovery)
+  ) %>% 
+  kable(caption = "Above Median Customer Affected Confusion Matrix Metrics") %>% 
+  kableExtra::kable_classic() %>% 
+  #format for markdown
+  kable_styling(latex_options="scale_down", font_size = 2)
+confusion_matrix_comparison
+```
+
+
+
+\newpage
+
+## Appendix A - Report Setup{#appendixA}
+This appendix provides the code used to setup up this report in RMarkdown.
+
+```{r message=FALSE, warning=FALSE, aval=FALSE}
+# Please exclude this page from page count
+# Libraries
+library(tidyverse)
+library(Hmisc)
+library(data.table)
+library(foreach)
+library(skimr)
+library(knitr)
+library(kableExtra)
+library(GGally)
+library(caret)
+library(pROC)
+library(here)
+library(glmnet)
+library(corrr)
+library(elasticnet)
+library(cvTools)
+
+# Load Data
+acs_outages <- read_csv(paste0(here::here(), "/cleaned_data/acs_outages_train.csv"))
+
+# Parameters
+lambdas <- 10^seq(3, -2, by = -.1)
+## List of outcome variables
+outcome_vars <- c("median_outage_duration_hr", "above_median_cust_affected")
+
+## List of covariates
+continuous_vars <-
+  names(acs_outages %>% select(-c(all_of(outcome_vars), GEOID)))
+
+# Functions
+eval_results <- function(model, true, predicted) {
+  model <- enquo(model)
+  SSE <- sum((predicted - true)^2)
+  SST <- sum((true - mean(true))^2)
+  R_square <- 1 - SSE / SST
+  RMSE = sqrt(SSE/length(true))
+
+  # Model performance metrics
+  data.frame(
+    model = as_label(model),
+    RMSE = RMSE,
+    Rsquare = R_square
+  )
+}
+```
+
+```{r, eval=FALSE}
+# Regression df
+reg_train <-
+  acs_outages %>%
+  select(-c(GEOID, above_median_cust_affected, prop_white, prop_eli, prop_college, prop_owner, rental_vacancy_rate, prop_rural)) %>%
+  drop_na()
+
+# Classification df
+# Set up data for classification (and drop NAs)
+acs_outages_class <- 
+  acs_outages %>% 
+  select(
+    -c(GEOID, median_outage_duration_hr)
+  ) %>% 
+  drop_na() 
+```
+
+## Appendix B - Prediction Models{#appendixB}
+This appendix provides the code used to develop both the regression and classification models.
+
+### Regression
+```{r}
+# Baseline model
+lr_baseline <- lm(median_outage_duration_hr ~ ., data = reg_train)
+
+baseline_results <-
+  eval_results(
+    lr_baseline,
+    reg_train$median_outage_duration_hr,
+    lr_baseline$fitted.values
+  )
+
+baseline.cv <-
+    cvFit(
+    lr_baseline,
+    data = reg_train,
+    y = reg_train$median_outage_duration_hr,
+    K = 10
+  )
+```
+
+```{r}
+# Apply transformations to heavy tailed covariates
+reg_train_transform <-
+  reg_train %>%
+   mutate(
+    prop_latino = log10(prop_latino + 1),
+    prop_less_than_hs = log10(prop_less_than_hs + 1)
+  )
+```
+
+```{r}
+# Transformation model
+lr_transform <- lm(median_outage_duration_hr ~ ., data = reg_train_transform)
+
+transform_results <-
+  eval_results(
+    lr_transform,
+    reg_train_transform$median_outage_duration_hr,
+    lr_transform$fitted.values
+  )
+
+transform.cv <-
+    cvFit(
+    lr_transform,
+    data = reg_train_transform,
+    y = reg_train_transform$median_outage_duration_hr,
+    K = 10
+  )
+```
+
+```{r}
+# All interactions model
+lr_interact <- lm(median_outage_duration_hr ~ . + .:., data = reg_train)
+
+interact_results <-
+  eval_results(
+    lr_interact,
+    reg_train$median_outage_duration_hr,
+    lr_interact$fitted.values
+  )
+
+interact.cv <-
+    cvFit(
+    lr_interact,
+    data = reg_train,
+    y = reg_train$median_outage_duration_hr,
+    K = 10
+  )
+```
+
+```{r}
+# Transformed data with all interactions model
+lr_transform_interact <- lm(median_outage_duration_hr ~ . + .:., data = reg_train_transform)
+
+transform_interact_results <-
+  eval_results(
+    lr_transform_interact,
+    reg_train_transform$median_outage_duration_hr,
+    lr_transform_interact$fitted.values
+  )
+
+transform_interact.cv <-
+    cvFit(
+    lr_transform_interact,
+    data = reg_train_transform,
+    y = reg_train_transform$median_outage_duration_hr,
+    K = 10
+  )
+```
+
+```{r}
+# More specific selected covariates
+# find variables most correlated to each other
+# (select correlations w/ abs > .5)
+covariate_corr <-
+  reg_train %>%
+  select(where(~sd(., na.rm = TRUE) > 0)) %>%
+  correlate() %>%
+  stretch() %>%
+  arrange(r) %>%
+  filter(abs(r) > .5) %>%
+  mutate(lead_y = lead(y)) %>%
+  filter(x != lead_y) %>%
+  select(x, y)
+
+# Reformat in formula form
+interaction_vars <-
+  covariate_corr %>%
+  unite(col = "interact", sep = ":") %>%
+  unlist() %>%
+  paste(collapse = " + ")
+
+# Pulled list of top covariates
+lr_selected_interact_transform <-
+  lm(
+    as.formula(paste("median_outage_duration_hr ~ . +", interaction_vars)),
+    data = reg_train_transform
+  )
+
+log_selected_interact_transform_results <-
+  eval_results(
+    lr_selected_interact_transform,
+    reg_train_transform$median_outage_duration_hr,
+    lr_selected_interact_transform$fitted.values
+  )
+
+log_selected_interact_transform.cv <-
+    cvFit(
+    lr_selected_interact_transform,
+    data = reg_train_transform,
+    y = reg_train_transform$median_outage_duration_hr,
+    K = 10
+  )
+
+```
+
+```{r}
+y <- reg_train_transform$median_outage_duration_hr
+x <- reg_train_transform %>% select(-median_outage_duration_hr) %>% data.matrix()
+
+# Ridge
+cv_ridge <- cv.glmnet(x, y, alpha = 0, lambda = lambdas, standardize = TRUE)
+ridge_model <- glmnet(x, y, alpha = 0, lambda = cv_ridge$lambda.min)
+
+ridge_predict <- predict(ridge_model, x)
+
+ridge_results <-
+  eval_results(
+    ridge_model,
+    reg_train_transform$median_outage_duration_hr,
+    ridge_predict
+  )
+
+# Lasso
+cv_lasso <- cv.glmnet(x, y, alpha = 1, lambda = lambdas, standardize = TRUE)
+lasso_model <- glmnet(x, y, alpha = 1, lambda = cv_lasso$lambda.min)
+
+lasso_predict <- predict(lasso_model, x)
+
+lasso_results <-
+  eval_results(
+    lasso_model,
+    reg_train_transform$median_outage_duration_hr,
+    lasso_predict
+  )
+
+
+```
+
+```{r}
+df <-
+  tribble(
+    ~model, ~RMSE, ~Rsquare, ~CVerror,
+    "baseline", baseline_results$RMSE, baseline_results$Rsquare, baseline.cv[["cv"]],
+    "transform", transform_results$RMSE, transform_results$Rsquare, transform.cv[["cv"]],
+    "all interactions", interact_results$RMSE, interact_results$Rsquare, interact.cv[["cv"]],
+    "transform + interactions", transform_interact_results$RMSE, transform_interact_results$Rsquare, transform_interact.cv[["cv"]],
+    "selected transform + interactions", log_selected_interact_transform_results$RMSE, log_selected_interact_transform_results$Rsquare, log_selected_interact_transform.cv[["cv"]],
+    "ridge", ridge_results$RMSE, ridge_results$Rsquare, NA,
+    "lasso", lasso_results$RMSE, lasso_results$Rsquare, NA,
+  )
+
+```
+
+\newpage
+
+### Classification
+#### Baseline model (logistic regression)
+```{r}
+# Look at results of the model
+logit_mod <-
+  glm(
+    above_median_cust_affected ~ .,
+    data = acs_outages_class, 
+    family = binomial
+  )
+summary(logit_mod)
+```
+
+AIC is 1995.3.
+
+```{r}
+# Create confusion matrix
+pred <- 
+  if_else(logit_mod$fitted.values > 0.5, "1", "0")
+
+confusion_matrix <-
+  table(acs_outages_class$above_median_cust_affected, pred)
+rownames(confusion_matrix) <- c("Obs. 0", "Obs. 1")
+colnames(confusion_matrix) <- c("Pred. 0", "Pred. 1")
+confusion_matrix
+```
+
+```{r}
+# calculate confusion matrix scores
+tn <- confusion_matrix[1,1]
+fn <- confusion_matrix[2,1]
+fp <- confusion_matrix[1,2]
+tp <- confusion_matrix[2,2]
+
+base_01_loss <- (fp + fn) / nrow(acs_outages_class)
+base_sensitivity <- tp / (fn + tp)
+base_specificity <- tn / (tn + fp)
+base_precision <- tp / (tp + fp)
+base_typeI_error <- fp / (tn + fp)
+base_typeII_error <- fn / (fn + tp)
+base_false_discovery <- fp / (tp + fp)
+```
+
+```{r, warning=FALSE, message=FALSE}
+# Plot ROC Curve
+roc(
+  response = acs_outages_class$above_median_cust_affected,
+  predictor = logit_mod$fitted.values, 
+  data = acs_outages_class, 
+  plot = TRUE,
+  main = "Baseline ROC",
+  col = "blue"
+)
+```
+
+```{r, warning=FALSE, message=FALSE}
+# determine AUC
+auc(
+  response = acs_outages_class$above_median_cust_affected,
+  predictor = logit_mod$fitted.values,  
+  data = acs_outages_class
+)
+```
+
+Major goal is optimize mean 0-1 loss and increase sensitivity. Logistic model is
+a good baseline, but I want to see if I can improve those metrics. Will use PCA
+to reduce covariates and eliminate some of the collinearity noticed in EDA. 
+Then I'll take the factor loadings to conduct KNN classification. Will do a
+10-fold cross-validation to ensure robustness of approach.
+
+#### Final model (PCA-based K-nearest neighbors algorithm)
+```{r}
+# conduct PCA (to reduce data, especially collinearity)
+# Find variance of each covariate
+train_col_var <- 
+  acs_outages_class %>% 
+  select(-above_median_cust_affected) %>% 
+  mutate(across(everything(), stats::var)) %>% 
+  distinct() %>% 
+  pivot_longer(cols = everything(), names_to = "vars", values_to = "variance") %>% 
+  # filter out 0 variance covariates
+  filter(variance != 0)
+
+# remove zero variance covariates
+class_filter <-
+  acs_outages_class %>% 
+  # remove outcome var as well
+  select(all_of(train_col_var$vars))
+
+# Run PCA
+pca <- prcomp(class_filter, scale = T, center = T)
+summary(pca)
+```
+
+```{r}
+# compute standard deviation of each principal component
+std_dev <- pca$sdev
+# compute variance
+pr_var <- std_dev^2
+# proportion of variance explained
+prop_var <- pr_var/sum(pr_var)
+
+# generate scree plot
+plot(
+  prop_var, 
+  xlab = "Principal Component",
+  ylab = "Proportion of Variance Explained",
+  type = "b"
+)
+```
+
+```{r}
+# Plot Eigenvalue variance from PCA
+factoextra::fviz_eig(pca)
+```
+
+Around 7-8 components explains about 75% of variance.
+
+```{r}
+# PCA results
+pca_table <- 
+  data.frame(
+    above_median_cust_affected = acs_outages_class[,1] %>% pull(), pca$x
+  ) %>% 
+  #filter to the first 7 components
+  select(above_median_cust_affected:PC7) %>% 
+  bind_cols()
+```
+
+```{r}
+set.seed(243)
+# Do 10-fold CV KNN
+# Set train control
+knn_control <- 
+  trainControl(
+    method = "cv", 
+    number = 10
+  )
+
+# Evaluate accuracy of KNN classifiers
+knn_fit <-
+  train(
+    as.factor(above_median_cust_affected) ~ .,
+    method = "knn",
+    # Limit to k = sqrt(n)
+    tuneGrid = expand.grid(k = 1:sqrt(nrow(pca_table))),
+    trControl = knn_control,
+    metric = "Accuracy",
+    data = pca_table
+  )
+```
+
+```{r}
+# create confusion matrix
+confusion_matrix_knn <- confusionMatrix(knn_fit, positive = 1)
+confusion_matrix_knn <- confusion_matrix_knn$table %>% t()
+confusion_matrix_knn
+```
+
+```{r}
+# calculate confusion matrix scores
+tn <- confusion_matrix_knn[1,1]
+fn <- confusion_matrix_knn[2,1]
+fp <- confusion_matrix_knn[1,2]
+tp <- confusion_matrix_knn[2,2]
+
+final_01_loss <- (fp + fn) / nrow(acs_outages_class)
+final_sensitivity <- tp / (fn + tp)
+final_specificity <- tn / (tn + fp)
+final_precision <- tp / (tp + fp)
+final_typeI_error <- fp / (tn + fp)
+final_typeII_error <- fn / (fn + tp)
+final_false_discovery <- fp / (tp + fp)
+```
+
+```{r}
+# confusion matrix comparison
+confusion_matrix_comparison <-
+  tibble(
+    metric =
+      c("Mean 0-1 Loss", "Precision", "Sensitivity", "Specificity",
+        "Type I Error Rate", "Type II Error Rate", "False Discovery Rate"),
+    base = 
+      c(base_01_loss, base_precision, base_sensitivity, base_specificity,
+        base_typeI_error, base_typeII_error, base_false_discovery),
+    final = 
+      c(final_01_loss, final_precision, final_sensitivity, final_specificity,
+        final_typeI_error, final_typeII_error, final_false_discovery)
+  ) %>% 
+  kable(caption = "Above Median Customer Affected Confusion Matrix Metrics") %>% 
+  kableExtra::kable_classic() %>% 
+  #format for markdown
+  kable_styling(latex_options="scale_down")
+confusion_matrix_comparison
+```
+
+Some metrics take a hit (like precision and specificity), but Sensitivity
+increased a good deal and the Mean 0-1 Loss improved as well - which were our 
+choice outcomes. Want the model to detect as many true positives as possible.
+
+```{r, warning=FALSE, message=FALSE}
+# Plot ROC Curve
+roc(
+  response = pca_table$above_median_cust_affected,
+  predictor = as.numeric(predict(knn_fit)), 
+  data = pca_table, 
+  plot = TRUE,
+  main = "Final ROC",
+  col = "blue"
+)
+```
+
+```{r, warning=FALSE, message=FALSE}
+# determine AUC
+auc(
+  response = pca_table$above_median_cust_affected,
+  predictor = as.numeric(predict(knn_fit)),  
+  data = pca_table
+)
+```
+
+Clearly AUC and ROC take a hit, but this was not the goal of the model. Wanted 
+to reduce mean 0-1 loss and increase sensitivity above all. This model is likely
+biased, but the flag only appears 20% of the time I believe such bias is justified.
+This is especially true because I wanted to optimize the sensitivity and accuracy 
+of the model.
+
+## Appendix C - Data Processing{#appendixC}
+This appendix provides the scripts used in processing, cleaning, and merging data.
+
+### ACS Clean Script
+```{r, eval=FALSE}
+# Setup -------------------------------------------------------------------
+# Packages:
+library(tidyverse)
+library(sf)
+library(tigris)
+library(tidycensus)
+options(tigris_use_cache = TRUE)
+
+# Directories:
+homedir <- "E:/neighborhood-outages/"
+workdir <- "raw_data/"
+savedir <- "cleaned_data/"
+setwd(homedir)
+
+# Import data:
+
+# Parameters:
+
+# Main Script -------------------------------------------------------------
+
+# Load available variables for 2018 ACS
+acs_vars <- load_variables(year = 2018, dataset = "acs5", cache = TRUE)
+dec_vars <- load_variables(year = 2010, dataset = "sf1", cache = TRUE)
+
+# load land area for each census tract
+ca_land_area <-
+  tracts("CA") %>%
+  st_drop_geometry() %>%
+  select(GEOID, ALAND) %>%
+  # convert from square meters to square kilometer
+  transmute(
+    GEOID = GEOID,
+    land_area_sq_km = ALAND / 1000000
+  )
+
+# Read in ACS data
+## ACS race data (2018)
+acs_race <-
+  get_acs(
+    geography = "tract",
+    table = "B03002",
+    year = 2018,
+    cache_table = TRUE,
+    state = "CA"
+  ) %>%
+  left_join(acs_vars, by = c("variable" = "name")) %>%
+  select(GEOID, label, estimate) %>%
+  mutate(
+    # convert names to better form
+    label = str_to_lower(str_replace_all(label, "!!|\\s+", "_")),
+    # short estimate to est
+    label = str_replace_all(label, "estimate", "est"),
+    # remove unnecessary character strings
+    label = str_remove_all(label, "est_total_not_hispanic_or_latino_|_alone")
+   ) %>%
+  # remove total non-hispanic and hispanic by race
+  filter(!str_detect(label, "est_total_not_hispanic_or_latino|or_latino_")) %>%
+  # pivot table
+  pivot_wider(
+    names_from = label,
+    values_from = estimate
+  ) %>%
+  # rename multiracial category
+  rename(multi_racial = two_or_more_races) %>%
+  # select out separated multiracial categories
+  select(-starts_with("two_or_more")) %>%
+  # create proportions by tract
+  mutate(
+    across(
+      where(is.double),
+      ~ . / est_total,
+      .names = "prop_{.col}"
+    )
+  ) %>%
+  # select for just tract ID, total population, and proportions
+  select(GEOID, est_total, starts_with("prop")) %>%
+  select(-prop_est_total) %>%
+  rename(prop_latino = prop_est_total_hispanic_or_latino) %>%
+  # join with land area to create density stat
+  left_join(ca_land_area, by = "GEOID") %>%
+  mutate(pop_density_sq_km = est_total / land_area_sq_km) %>%
+  # drop total population variable
+  select(-est_total)
+
+## ACS income data (2018)
+### Read in median income by tract
+acs_median_income <-
+  get_acs(
+    geography = "county",
+    variables = "B06011_001",
+    year = 2018,
+    cache_table = TRUE,
+    state = "CA"
+  ) %>%
+  select(GEOID, ami = estimate)
+
+## ACS income data (2018)
+acs_income <-
+  get_acs(
+    geography = "tract",
+    table = "B19001",
+    year = 2018,
+    cache_table = TRUE,
+    state = "CA"
+  ) %>%
+  left_join(acs_vars, by = c("variable" = "name")) %>%
+  select(GEOID, label, estimate) %>%
+  mutate(
+    # convert names to better form
+    label = str_to_lower(str_replace_all(label, "!!|\\s+", "_")),
+    # short estimate to est
+    label = str_replace_all(label, "estimate", "est"),
+    est_total = if_else(label == "est_total", estimate, NA_real_)
+  ) %>%
+  group_by(GEOID) %>%
+  fill(everything(), .direction = "down") %>%
+  ungroup() %>%
+  filter(label != "est_total") %>%
+  mutate(
+    label = str_extract(label, "\\$\\d+,\\d+$"),
+    label = str_remove_all(label, "\\$|[:punct:]"),
+    label = if_else(is.na(label), 500000, as.double(label)),
+    county = str_extract(GEOID, "^\\d{5}")
+  ) %>%
+  rename(upper_income_limit = label) %>%
+  left_join(acs_median_income, by = c("county" = "GEOID")) %>%
+  # construct the income categories
+  mutate(
+    income_category =
+      case_when(
+        upper_income_limit <= (.30 * ami)       ~ "eli",
+        upper_income_limit <= (.50 * ami) &
+          upper_income_limit > (.30 * ami)      ~ "vli",
+        upper_income_limit <= (.80 * ami) &
+          upper_income_limit > (.50 * ami)      ~ "li",
+        upper_income_limit <= (1.20 * ami) &
+          upper_income_limit > (.80 * ami)      ~ "mi",
+        upper_income_limit > (1.20 * ami)       ~ "hi",
+        TRUE                                    ~ NA_character_
+      )
+  ) %>%
+  select(GEOID, estimate, income_category, est_total) %>%
+  group_by(GEOID, income_category) %>%
+  mutate(estimate = sum(estimate, na.rm = TRUE)) %>%
+  slice(1) %>%
+  ungroup() %>%
+  # change shape of data
+  pivot_wider(names_from = income_category, values_from = estimate) %>%
+  # create proportions by tract
+  mutate(
+    across(
+      eli:vli,
+      ~ . / est_total,
+      .names = "prop_{.col}"
+    )
+  ) %>%
+  # select for just tract ID, total population, and proportions
+  select(GEOID, starts_with("prop")) %>%
+  mutate(across(where(is.double), ~ replace_na(.x, replace = 0)))
+
+rm(acs_median_income)
+
+## ACS tenure data (2018)
+acs_tenure <-
+  get_acs(
+    geography = "tract",
+    table = "B25003",
+    year = 2018,
+    cache_table = TRUE,
+    state = "CA"
+  ) %>%
+  left_join(acs_vars, by = c("variable" = "name")) %>%
+  select(GEOID, label, estimate) %>%
+  mutate(
+    # convert names to better form
+    label = str_to_lower(str_replace_all(label, "!!|\\s+", "_")),
+    # short estimate to est
+    label = str_replace_all(label, "estimate", "est"),
+    est_total = if_else(label == "est_total", estimate, NA_real_)
+  ) %>%
+  group_by(GEOID) %>%
+  fill(everything(), .direction = "down") %>%
+  ungroup() %>%
+  filter(label != "est_total") %>%
+  mutate(label = str_remove_all(label, "est_total_|_occupied")) %>%
+  pivot_wider(names_from = label, values_from = estimate) %>%
+  # create proportions by tract
+  mutate(
+    across(
+      owner:renter,
+      ~ . / est_total,
+      .names = "prop_{.col}"
+    )
+  )
+
+## ACS college-educated data (2018)
+acs_education <-
+  get_acs(
+    geography = "tract",
+    table = "B15003",
+    year = 2018,
+    cache_table = TRUE,
+    state = "CA"
+  ) %>%
+  left_join(acs_vars, by = c("variable" = "name")) %>%
+  select(GEOID, label, estimate) %>%
+  mutate(
+    # convert names to better form
+    label = str_to_lower(str_replace_all(label, "!!|\\s+", "_")),
+    # short estimate to est
+    label = str_replace_all(label, "estimate", "est"),
+    est_total = if_else(label == "est_total", estimate, NA_real_)
+  ) %>%
+  group_by(GEOID) %>%
+  fill(everything(), .direction = "down") %>%
+  ungroup() %>%
+  filter(label != "est_total") %>%
+  mutate(
+    label = str_remove_all(label, "est_total_"),
+    label =
+      case_when(
+        str_detect(
+          label, "associate|bachelor|master|professional|doctorate"
+        )                                                           ~ "college",
+        str_detect(
+          label, "high_school|ged_or_|some_college"
+        )                                                       ~ "high_school",
+        TRUE                                                    ~ "less_than_hs"
+      )
+  ) %>%
+  group_by(GEOID, label) %>%
+  mutate(estimate = sum(estimate, na.rm = TRUE)) %>%
+  slice(1) %>%
+  ungroup() %>%
+  pivot_wider(names_from = label, values_from = estimate) %>%
+  # create proportions by tract
+  mutate(
+    across(
+      college:less_than_hs,
+      ~ . / est_total,
+      .names = "prop_{.col}"
+    )
+  ) %>%
+  # select for just tract ID, total population, and proportions
+  select(GEOID, starts_with("prop"))
+
+## ACS vacancy data (2018)
+acs_vacancy <-
+  get_acs(
+    geography = "tract",
+    table = "B25004",
+    year = 2018,
+    cache_table = TRUE,
+    state = "CA"
+  ) %>%
+  left_join(acs_vars, by = c("variable" = "name")) %>%
+  select(GEOID, label, estimate) %>%
+  mutate(
+    # convert names to better form
+    label = str_to_lower(str_replace_all(label, "!!|\\s+", "_")),
+    # short estimate to est
+    label = str_replace_all(label, "estimate", "est")
+  ) %>%
+  filter(
+    label %in%
+      c(
+        "est_total_for_rent", "est_total_rented,_not_occupied",
+        "est_total_for_sale_only", "est_total_sold,_not_occupied"
+      )
+  ) %>%
+  mutate(label = str_remove_all(label, "est_total_|,")) %>%
+  pivot_wider(names_from = label, values_from = estimate) %>%
+  left_join(acs_tenure, by = "GEOID") %>%
+  transmute(
+    GEOID = GEOID,
+    rental_vacancy_rate = for_rent / (renter + rented_not_occupied + for_rent),
+    owner_vacancy_rate = for_sale_only / (owner + sold_not_occupied + for_sale_only)
+  )
+
+### Update tenure
+acs_tenure <-
+  acs_tenure %>%
+  # select for just tract ID, total population, and proportions
+  select(GEOID, starts_with("prop"))
+
+## Urban and rural population
+dec_urban <-
+  get_decennial(
+    geography = "tract",
+    variables = c("P002001", "P002002", "P002005"),
+    year = 2010,
+    cache_table = TRUE,
+    state = "CA"
+  ) %>%
+  left_join(dec_vars, by = c("variable" = "name")) %>%
+  select(GEOID, label, value) %>%
+  mutate(
+    # convert names to better form
+    label = str_to_lower(str_replace_all(label, "!!|\\s+", "_"))
+  ) %>%
+  pivot_wider(names_from = label, values_from = value) %>%
+  mutate(
+    prop_urban = total_urban / total,
+    prop_rural = total_rural / total
+  ) %>%
+  select(GEOID, prop_rural, prop_urban)
+
+# Merge all ACS data
+acs_merged <-
+  acs_race %>%
+  left_join(acs_income, by = "GEOID") %>%
+  left_join(acs_education, by = "GEOID") %>%
+  left_join(acs_tenure, by = "GEOID") %>%
+  left_join(acs_vacancy, by = "GEOID") %>%
+  left_join(dec_urban)
+
+# Save Results ------------------------------------------------------------
+write_csv(
+  acs_merged,
+  file = paste0(homedir, savedir, "acs_clean.csv")
+)
+
+rm(
+  acs_education, acs_income, acs_merged, acs_race, acs_tenure,
+  acs_vacancy, acs_vars, ca_land_area, dec_urban, dec_vars
+)
+```
+
+### Outage Clean Script
+```{r, eval=FALSE}
+# Setup -------------------------------------------------------------------
+# Packages:
+library(tidyverse)
+library(sf)
+library(tigris)
+library(lubridate)
+options(tigris_use_cache = TRUE)
+
+# Directories:
+homedir <- "E:/neighborhood-outages/"
+workdir <- "raw_data/"
+savedir <- "cleaned_data/"
+setwd(homedir)
+
+# Import data:
+outages <- read_csv(paste0(homedir, workdir, "outages_expanded.csv"))
+
+# Parameters:
+
+# Main Script -------------------------------------------------------------
+
+# Read in California block groups
+ca_tracts <- tracts(state = "CA")
+
+# Filter outages and geocode lat/long to Census tract
+outages_filter <-
+  outages %>%
+  # Extract possible duration hours, min/max est affected, lat/long
+  select(
+    possible_duration_hours,
+    min_estCustAffected,
+    max_estCustAffected,
+    latitude,
+    longitude
+  ) %>%
+  # determine mean customers affected
+  mutate(
+    mean_cust_affected = (min_estCustAffected + max_estCustAffected) / 2
+  ) %>%
+  # convert to sf object
+  st_as_sf(
+    coords = c("longitude", "latitude"), crs = st_crs(ca_tracts)
+  ) %>%
+  # join to CA block groups
+  st_join(ca_tracts) %>%
+  # drop geometry
+  st_drop_geometry() %>%
+  # select out unnecessary columns
+  select(
+    GEOID, outage_duration_hr = possible_duration_hours, mean_cust_affected
+  )
+
+# Remove unnecessary objects
+rm(ca_tracts, outages)
+
+# Save Results ------------------------------------------------------------
+write_csv(
+  outages_filter,
+  file = paste0(homedir, savedir, "outages_clean.csv")
+)
+```
+
+### ACS and Outage Merge Script
+```{r, eval=FALSE}
+# Setup -------------------------------------------------------------------
+# Packages:
+library(tidyverse)
+#library(here)
+
+# Directories:
+homedir <- "E:/neighborhood-outages/"
+workdir <- "cleaned_data/"
+savedir <- "cleaned_data/"
+setwd(homedir)
+
+# Parameters
+outages_filepath <- paste0(homedir, workdir, "outages_clean.csv")
+acs_filepath <- paste0(homedir, workdir, "acs_clean.csv")
+
+#outages_filepath <- here("cleaned_data/outages_clean.csv")
+#acs_filepath <- here("cleaned_data/acs_clean.csv")
+
+# Import data:
+outages <- read_csv(outages_filepath)
+acs <- read_csv(acs_filepath)
+
+# Parameters:
+set.seed(572)
+
+# Main Script -------------------------------------------------------------
+
+outages_grouped <-
+  outages %>%
+  group_by(GEOID) %>%
+  summarise(
+    median_outage_duration_hr = median(outage_duration_hr),
+    median_mean_cust_affected = median(mean_cust_affected),
+    num_outages = n()
+  ) %>%
+  ungroup() %>%
+  mutate(
+    above_median_cust_affected =
+      if_else(
+        median_mean_cust_affected > median(median_mean_cust_affected), 1, 0
+      )
+  ) %>%
+  # remove median of mean customers affected column
+  select(-median_mean_cust_affected)
+
+acs_outages <-
+  outages_grouped %>%
+  left_join(acs, by = "GEOID") %>%
+  mutate(
+    median_outage_duration_hr = replace_na(median_outage_duration_hr, 0),
+    above_median_cust_affected = replace_na(above_median_cust_affected, 0),
+    num_outages = replace_na(num_outages, 0),
+    n_outages_sq_km = num_outages / land_area_sq_km
+  ) %>%
+  # drop unneeded variables
+  select(-c(num_outages, land_area_sq_km)) %>%
+  mutate(rowid = row_number())
+
+# CA census tracts that we don't have outage data for, as they are likely
+# not serviced by PG&E.
+non_outage_tracts <-
+  setdiff(acs$GEOID, outages_grouped$GEOID) %>%
+  as_tibble() %>%
+  rename(non_pge_tract = value)
+
+# Create test and train sets
+
+acs_outages_test <-
+  acs_outages %>%
+  slice_sample(prop = .2)
+
+acs_outages_train <-
+  acs_outages %>%
+  filter(!(rowid %in% acs_outages_test$rowid)) %>%
+  select(-rowid)
+
+acs_outages_test <- acs_outages_test %>% select(-rowid)
+
+rm(acs, outages, outages_grouped, acs_outages)
+
+# Save Results ------------------------------------------------------------
+## write test ACS outages data
+write_csv(
+  acs_outages_test,
+  file = paste0(homedir, savedir, "acs_outages_test.csv")
+)
+
+## write train ACS outages data
+write_csv(
+  acs_outages_train,
+  file = paste0(homedir, savedir, "acs_outages_train.csv")
+)
+
+## write non-outage tracts
+write_csv(
+  non_outage_tracts,
+  file = paste0(homedir, savedir, "non_outage_tracts.csv")
+)
+
+rm(non_outage_tracts, acs_outages_test, acs_outages_train)
+```
+
+## Appendix D - EDA{#appendixD}
+This appendix provides all the EDA conducted prior to model building.
+
+### Missing values
+```{r}
+# NA values?
+# Filter all the columns to exclude NA
+no_na_df <-
+  acs_outages %>%
+  filter(across(everything(), ~ !is.na(.)))
+
+acs_outages %>%
+  filter(!(GEOID %in% no_na_df$GEOID)) %>%
+  arrange(desc(prop_white))
+```
+
+Not that many NAs, should consider dropping.
+
+```{r}
+# NULL values?
+# Filter all the columns to exclude NA
+no_null_df <-
+  acs_outages %>%
+  filter(across(everything(), ~ !is.null(.)))
+
+acs_outages %>%
+  filter(!(GEOID %in% no_null_df$GEOID)) %>%
+  arrange(desc(prop_white))
+```
+
+No NULL values.
+
+### Correlations
+```{r}
+### Generate correlation matrices with p-values ###
+
+# remove continuous/outcome vars if sd < 0
+corr_matrix <-
+  acs_outages %>%
+  select(all_of(continuous_vars), all_of(outcome_vars)) %>%
+  select(where(~sd(., na.rm = TRUE) > 0))
+
+# create correlation matrix
+corr_matrix <- rcorr(as.matrix(corr_matrix))
+corr_matrix <-
+  # merge p-values
+  bind_cols(
+    as.data.frame(corr_matrix$r),
+    as.data.frame(corr_matrix$P) %>% rename_all(~paste0(.x, "_p-value"))
+  ) %>%
+  # filter to relevant predictor and outcome variables
+  select(all_of(outcome_vars), all_of(paste0(outcome_vars, "_p-value"))) %>%
+  rownames_to_column(var = "predictor") %>%
+  filter(
+    predictor %in% c(continuous_vars, paste0(continuous_vars, "_p-value"))
+  ) %>%
+  column_to_rownames(var = "predictor") %>%
+  select(sort(colnames(.))) %>%
+  as.data.frame()
+```
+
+```{r}
+### Filter to highest correlated & statistical significant ###
+# For each outcome variable, select significant correlations (in abs value)
+
+# create list of variables to use as a filter
+corr_top <- foreach(out = outcome_vars) %do% {
+  out_p <- paste0(out, "_p-value")
+  corr_matrix %>%
+    select(!!out, !!out_p) %>%
+    filter(!!sym(out_p) < 0.05) %>%
+    arrange(desc(abs(.))) %>%
+    # slice to the top 10 results
+    # head(10) %>%
+    # extract the rownames for filtering
+    rename_all(~str_remove(., "outcome_")) %>%
+    rownames_to_column(var = "predictor") %>%
+    mutate(predictor = str_remove(predictor, "continuous_"))
+}
+names(corr_top) <- str_remove(outcome_vars, "outcome_")
+
+corr_top$median_outage_duration_hr %>%
+  kable(caption = "Median Outage Duration Correlations") %>%
+  kableExtra::kable_classic() %>%
+  #format for markdown
+  kable_styling(latex_options="scale_down")
+```
+
+```{r}
+corr_top$above_median_cust_affected %>%
+  kable(caption = "Above Median Customer Affected Correlations") %>%
+  kableExtra::kable_classic() %>%
+  #format for markdown
+  kable_styling(latex_options="scale_down")
+```
+
+```{r, warning=FALSE, message=FALSE, fig.width=10, fig.height=8}
+# create ggpairs scatterplot - looking at top 10 correlations
+# visualize data to choose transformation
+
+
+# make a function to plot generic data with points and a loess line
+my_fn <- function(data, mapping, method="loess", ...){
+  p <- ggplot(data = data, mapping = mapping) +
+    geom_point(size = 0.01) +
+    geom_smooth(method=method, formula = y ~ x, ...)
+  return(p)
+}
+
+acs_outages %>%
+  select(-GEOID) %>%
+  # filter to significantly correlated variables
+  select(
+    all_of(outcome_vars),
+    corr_top$median_outage_duration_hr$predictor %>% head(10),
+    corr_top$above_median_cust_affected$predictor %>% head(10)
+  ) %>%
+  ggpairs(
+    upper = list(continuous = wrap("cor", size = 2), size = 0.01),
+    lower = list(continuous = my_fn, combo = wrap("facethist", binwidth = .1)),
+    progress = FALSE
+  ) +
+  theme_grey(base_size = 5)
+```
+
+```{r}
+# find variables most correlated to each other
+# (select correlations w/ abs > .5)
+covariate_corr <-
+  acs_outages %>%
+  select(all_of(continuous_vars), all_of(outcome_vars)) %>%
+  # drop prop owner
+  select(-prop_owner) %>%
+  select(where(~sd(., na.rm = TRUE) > 0)) %>%
+  correlate() %>%
+  stretch() %>%
+  arrange(r) %>%
+  filter(abs(r) > .5)
+
+# reformat in formula form
+interaction_vars <-
+  covariate_corr %>%
+  mutate(lead_y = lead(y)) %>%
+  filter(x != lead_y) %>%
+  select(x, y) %>%
+  unite(col = "interact", sep = ":") %>%
+  unlist() %>%
+  paste(collapse = " + ")
+covariate_corr
+```
+
+### Median outage histogram
+```{r}
+acs_outages %>%
+  ggplot(aes(x = median_outage_duration_hr)) +
+  geom_histogram(bins = 100)
+```
+
+### Above average customer affected distribution plot
+```{r}
+acs_outages %>%
+  ggplot(aes(x = as.factor(above_median_cust_affected))) +
+  geom_bar(aes(y = (..count..)/sum(..count..))) +
+  labs(
+    x = "Above Median Customers Affected",
+    y = "Proportion of Data"
+  )
+```
+
+### Bar plots
+#### Race
+```{r, message=FALSE, warning=FALSE}
+acs_outages %>%
+  pivot_longer(
+    cols = prop_white:prop_latino,
+    names_to = "race",
+    values_to = "prop_race"
+  ) %>%
+  mutate(
+    race =str_to_title(str_replace_all(str_remove(race, "^prop_"), "_", " "))
+  ) %>%
+  select(all_of(outcome_vars), race, prop_race) %>%
+  ggplot(aes(x = median_outage_duration_hr, y = prop_race, color = race)) +
+  geom_point(alpha = .4) +
+  geom_smooth()
+```
+
+```{r}
+acs_outages %>%
+  pivot_longer(
+    cols = prop_white:prop_latino,
+    names_to = "race",
+    values_to = "prop_race"
+  ) %>%
+  mutate(
+    race =str_to_title(str_replace_all(str_remove(race, "^prop_"), "_", " "))
+  ) %>%
+  select(all_of(outcome_vars), race, prop_race) %>%
+  group_by(above_median_cust_affected, race) %>%
+  summarise(prop_race_mean = mean(prop_race, na.rm = TRUE)) %>%
+  ggplot(
+    aes(
+      x = as_factor(above_median_cust_affected),
+      y = prop_race_mean,
+      fill = race
+    )
+  ) +
+  geom_col()
+```
+
+#### Population density
+```{r}
+acs_outages %>%
+  ggplot(aes(x = median_outage_duration_hr, y = pop_density_sq_km)) +
+  geom_point(alpha = .4) +
+  geom_smooth()
+```
+
+```{r}
+acs_outages %>%
+  ggplot(
+    aes(
+      x = as_factor(above_median_cust_affected),
+      y = pop_density_sq_km
+    )
+  ) +
+  geom_col()
+```
+
+#### AMI Groups
+```{r, message=FALSE, warning=FALSE}
+acs_outages %>%
+  pivot_longer(
+    cols = prop_eli:prop_vli,
+    names_to = "ami_group",
+    values_to = "prop_ami_group"
+  ) %>%
+  mutate(
+    ami_group =
+      str_to_upper(str_replace_all(str_remove(ami_group, "^prop_"), "_", " "))
+  ) %>%
+  select(all_of(outcome_vars), ami_group, prop_ami_group) %>%
+  ggplot(
+    aes(x = median_outage_duration_hr, y = prop_ami_group, color = ami_group)
+  ) +
+  geom_point(alpha = .4) +
+  geom_smooth()
+```
+
+```{r, warning=FALSE, message=FALSE}
+acs_outages %>%
+ pivot_longer(
+    cols = prop_eli:prop_vli,
+    names_to = "ami_group",
+    values_to = "prop_ami_group"
+  ) %>%
+  mutate(
+    race =
+      str_to_upper(str_replace_all(str_remove(ami_group, "^prop_"), "_", " "))
+  ) %>%
+  select(all_of(outcome_vars), ami_group, prop_ami_group) %>%
+  group_by(above_median_cust_affected, ami_group) %>%
+  summarise(prop_ami_mean = mean(prop_ami_group, na.rm = TRUE)) %>%
+  ggplot(
+    aes(
+      x = as_factor(above_median_cust_affected),
+      y = prop_ami_mean,
+      fill = ami_group
+    )
+  ) +
+  geom_col()
+```
+
+#### Education
+```{r, message=FALSE, warning=FALSE}
+acs_outages %>%
+  pivot_longer(
+    cols = prop_college:prop_less_than_hs,
+    names_to = "education",
+    values_to = "prop_education"
+  ) %>%
+  mutate(
+    education =
+      str_to_title(str_replace_all(str_remove(education, "^prop_"), "_", " "))
+  ) %>%
+  select(all_of(outcome_vars), education, prop_education) %>%
+  ggplot(
+    aes(x = median_outage_duration_hr, y = prop_education, color = education)
+  ) +
+  geom_point(alpha = .4) +
+  geom_smooth()
+```
+
+```{r, warning=FALSE, message=FALSE}
+acs_outages %>%
+  pivot_longer(
+    cols = prop_college:prop_less_than_hs,
+    names_to = "education",
+    values_to = "prop_education"
+  ) %>%
+  mutate(
+    education =
+      str_to_upper(str_replace_all(str_remove(education, "^prop_"), "_", " "))
+  ) %>%
+  select(all_of(outcome_vars), education, prop_education) %>%
+  group_by(above_median_cust_affected, education) %>%
+  summarise(prop_education_mean = mean(prop_education, na.rm = TRUE)) %>%
+  ggplot(
+    aes(
+      x = as_factor(above_median_cust_affected),
+      y = prop_education_mean,
+      fill = education
+    )
+  ) +
+  geom_col()
+```
+
+#### Tenure
+```{r, message=FALSE, warning=FALSE}
+acs_outages %>%
+  pivot_longer(
+    cols = prop_owner:prop_renter,
+    names_to = "tenure",
+    values_to = "prop_tenure"
+  ) %>%
+  mutate(
+    tenure =
+      str_to_title(str_replace_all(str_remove(tenure, "^prop_"), "_", " "))
+  ) %>%
+  select(all_of(outcome_vars), tenure, prop_tenure) %>%
+  ggplot(
+    aes(x = median_outage_duration_hr, y = prop_tenure, color = tenure)
+  ) +
+  geom_point(alpha = .4) +
+  geom_smooth()
+```
+
+```{r, warning=FALSE, message=FALSE}
+acs_outages %>%
+  pivot_longer(
+    cols = prop_owner:prop_renter,
+    names_to = "tenure",
+    values_to = "prop_tenure"
+  ) %>%
+  mutate(
+    tenure =
+      str_to_upper(str_replace_all(str_remove(tenure, "^prop_"), "_", " "))
+  ) %>%
+  select(all_of(outcome_vars), tenure, prop_tenure) %>%
+  group_by(above_median_cust_affected, tenure) %>%
+  summarise(prop_tenure_mean = mean(prop_tenure, na.rm = TRUE)) %>%
+  ggplot(
+    aes(
+      x = as_factor(above_median_cust_affected),
+      y = prop_tenure_mean,
+      fill = tenure
+    )
+  ) +
+  geom_col()
+```
+
+#### Vacancy rates
+```{r, message=FALSE, warning=FALSE}
+acs_outages %>%
+  pivot_longer(
+    cols = rental_vacancy_rate:owner_vacancy_rate,
+    names_to = "vacancy_type",
+    values_to = "vacancy_rate"
+  ) %>%
+  mutate(
+    vacancy_type =
+      str_to_title(str_replace_all(str_remove(vacancy_type, "^prop_"), "_", " "))
+  ) %>%
+  select(all_of(outcome_vars), vacancy_type, vacancy_rate) %>%
+  ggplot(
+    aes(x = median_outage_duration_hr, y = vacancy_rate, color = vacancy_type)
+  ) +
+  geom_point(alpha = .4) +
+  geom_smooth()
+```
+
+```{r, warning=FALSE, message=FALSE}
+acs_outages %>%
+  pivot_longer(
+    cols = rental_vacancy_rate:owner_vacancy_rate,
+    names_to = "vacancy_type",
+    values_to = "vacancy_rate"
+  ) %>%
+  mutate(
+    vacancy_type =
+      str_to_upper(str_replace_all(str_remove(vacancy_type, "^prop_"), "_", " "))
+  ) %>%
+  select(all_of(outcome_vars), vacancy_type, vacancy_rate) %>%
+  group_by(above_median_cust_affected, vacancy_type) %>%
+  summarise(prop_vacancy_mean = mean(vacancy_rate, na.rm = TRUE)) %>%
+  ggplot(
+    aes(
+      x = as_factor(above_median_cust_affected),
+      y = prop_vacancy_mean,
+      fill = vacancy_type
+    )
+  ) +
+  geom_col(position = "dodge")
+```

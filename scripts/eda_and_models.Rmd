@@ -81,8 +81,7 @@ acs_outages %>%
   arrange(desc(prop_white))
 ```
 
-Not that many NAs, not sure if worth dropping. Some rows with NAs have otherwise
-valuable data.
+Not that many NAs, should consider dropping.
 
 ```{r}
 # NULL values?
