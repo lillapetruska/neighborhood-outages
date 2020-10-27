@@ -355,12 +355,12 @@ lm_ctrl <- trainControl(method = "cv", number = 10)
 
 lm_fit <- 
   train(
-    median_outage_duration_hr ~ ., 
+    median_outage_duration_hr ~ . + .:., 
     data = acs_outages_reg_transform,
     method = "lm",
     trControl = lm_ctrl
   )
-
+lm_fit
 ```
 
 # PCA attempt
