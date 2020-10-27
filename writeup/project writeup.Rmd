@@ -7,11 +7,11 @@ urlcolor: blue
 indent: true
 ---
 
-Matt Alvarez-Nissen and Lilla Petruska
+\noindent Matt Alvarez-Nissen and Lilla Petruska
 
-MS&E 226
+\noindent MS&E 226
 
-`r format(Sys.time(), "%m/%d/%Y")`
+\noindent `r format(Sys.time(), "%m/%d/%Y")`
 
 \allsectionsfont{\centering} 
 ## MS&E 226 Project Part 1 - Neighborhood Outages
