@@ -598,7 +598,7 @@ plot(
   type = "b"
 )
 ```
-Around 17 components explains about 98% of variance.
+Around 13 components explains about 90% of variance.
 
 ```{r}
 # PCA results
@@ -606,8 +606,8 @@ pca_table <-
   data.frame(
     above_median_cust_affected = acs_outages_class[,1] %>% pull(), pca$x
   ) %>% 
-  #filter to the first 17 components
-  select(above_median_cust_affected:PC17) %>% 
+  #filter to the first 16 components
+  select(above_median_cust_affected:PC13) %>% 
   bind_cols()
 ```
 
