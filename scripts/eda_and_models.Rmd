@@ -601,13 +601,19 @@ plot(
 Around 13 components explains about 90% of variance.
 
 ```{r}
+# Plot Eigenvalue variance from PCA
+factoextra::fviz_eig(pca)
+```
+
+
+```{r}
 # PCA results
 pca_table <- 
   data.frame(
     above_median_cust_affected = acs_outages_class[,1] %>% pull(), pca$x
   ) %>% 
   #filter to the first 16 components
-  select(above_median_cust_affected:PC13) %>% 
+  select(above_median_cust_affected:PC6) %>% 
   bind_cols()
 ```
 
