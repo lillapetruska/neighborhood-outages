@@ -500,7 +500,7 @@ logit_mod <-
 summary(logit_mod)
 ```
 
-AIC is 1998.9.
+AIC is 1996.2.
 
 ```{r}
 # Create confusion matrix
@@ -575,7 +575,8 @@ train_col_var <-
 class_filter <-
   acs_outages_class %>% 
   # remove outcome var as well
-  select(all_of(train_col_var$vars)) 
+  select(all_of(train_col_var$vars))
+
 # Run PCA
 pca <- prcomp(class_filter, scale = T, center = T)
 summary(pca)
@@ -597,7 +598,7 @@ plot(
   type = "b"
 )
 ```
-Around 16 components explains about 98% of variance.
+Around 17 components explains about 98% of variance.
 
 ```{r}
 # PCA results
@@ -605,8 +606,8 @@ pca_table <-
   data.frame(
     above_median_cust_affected = acs_outages_class[,1] %>% pull(), pca$x
   ) %>% 
-  #filter to the first 16 components
-  select(above_median_cust_affected:PC16) %>% 
+  #filter to the first 17 components
+  select(above_median_cust_affected:PC17) %>% 
   bind_cols()
 ```
 
