@@ -133,7 +133,27 @@ After exploring our data, it became clear to us that correlations between covari
 ### Predictions
 Here we will discuss the general modeling process and decisions made in creating both regression and classification models. The full process and code can be found in [Appendix B](#appendixB).
 
-@Lilla - discuss regression model here
+Our regression model was built to predict our continuous outcome variable, median outage duration (hours), in each tract. Each model we created was trained on a training set comprising 80% of our data. A prediction error and R^2 value were calculated for each model to evaluate how well each fit to the training set. To determine which model was the best, we used K-fold Cross Validation as an estimate of prediction error on the test set.
+
+```{r, echo=FALSE}
+reg_stats <- read_rds("~/GitHub/neighborhood-outages/cleaned_data/reg_stats.rds")
+
+reg_stats %>% 
+  slice(-1) %>% 
+  kable(caption = "Prediction Error, R^2, and CVerror for Regression Models") %>%
+  kableExtra::kable_classic() %>%
+  #format for markdown
+  kable_styling(latex_options = "scale_down", font_size = 2)
+
+```
+
+For a baseline model, we used a basic OLS linear regression as it will minimize the sum of the squared differences between the observed values and the corresponding fitted values. This resulted in a RMSE of 4.032, R^2 value of 0.038. This was not surprising, as our dataset is relatively small and all our covariates, while still important environmental indicators, are from a separate data source. Given that our baseline model had a high RMSE and low R^2 value, we applied a series of modifications to our model. In our GGPairs plot of covariates showed that two covariates, 'prop_latino' and 'prop_less_than_hs' had  heavy-tailed distributions and thus could benefit from log transformations. We transformed the data and ran the baseline model again with transformed covariates. This had a negligible improvement in RMSE and R^2. Knowing that collinearity may be an issue because our covariates were measured as proportions of a series of variables, we also decided to create a model including all interaction terms. This improved RMSE and R^2 to 3.857 and 0.12, respectively, though was expected because the large number of additional covariate terms can result in overfitting of the data. To control for this, we tried only including interaction terms for covariate that had a absolute correlation coefficient of 0.5. This model had an slightly higher RMSE and lower R^squared, but likely overfit the data less than before. Finally, we used ridge and lasso regression techniques to select for the most meaningful covariates. Both these methods had worse results than the baseline, as the baseline was likely overfit the data relatively more than the regularization models. Overall, all our models had poor performance which indicates that our covariates have low predictive power. While we had hoped the demographic and land use data might help us understand PG&E's performance, there are likely other factors.
+
+Alongside calculating RMSE and R^squared to understand the performance of our models on the training set, K-fold Cross Validation was done to estimate generalization error. While also testing our models on a validation set would have produced an unbiased estimate of generalization error, lower error results could have happened by luck and underestimated the generalization error. Our K-fold Cross Validation results produced biased estimates of generalization error because the cross validation was done on the same training dataset. However, each validation was done on subset of our training data. We accept that using CVerror to estimate generalization error will be biased and we will not know the true generalization error until testing our models on the test set.
+
+When looking at the table above, we see that the baseline, transfrom, and selected transform + interaction models have the lowest CVerrors. The simple transform model performs the best across the board, likely because the log transformations allow us to pick up the effects of small changes in the 'prop_latino' and 'prop_less_than_hs' variables on the outcome variable. Overall, all models performed relatively poorly and did not improve much compared to the baseline model. Any improvements are highly optimistic and lower CVerror could be simply attributed to chance. This is partly because the baseline itself was a poor model and more complex models did nothing more than overfit to the training data. Using K-fold Cross Validation as our evaluation of performance, the transform model performed the best and had an estimate for prediction error of 4.066. This model does not overfit the test data as much as the more complex ones, while accounts for the heavy-tailed nature of its covariates.
+
+If we take a step back and look at the sample mean of our training data as an even simpler, the average median outage duration across census tracts is 2.34748 hours. When comparing our model performance to this, each model would still perform poorly, predicting a sample mean of potentially 4 hours greater than the real value (technically it could only predict ~2.3 hours lower because time cannot be negative!). When considering the policy implications of this, predicting a power outage that is substantially longer could have negative impacts on communities and hold back appropriate disaster response. However, preparing for longer outages may be smarter in reality given the unpredictable nature of wildfires and natural disasters. It is always better to be safer than sorry.   
 
 In classification, our major goal was to identify as many true positives as possible, because we wanted a model optimized for proactive decision-making. In other words, we were fine with relatively higher false positives, because the model is designed to give warning to particular neighborhood types if they are at higher risk of having high numbers of customers affected by outages. As such our major goals were to reduce mean 0-1 loss and increase sensitivity.
 
@@ -508,6 +528,14 @@ ridge_results <-
     ridge_predict
   )
 
+ridge.cv <- 
+  cvFit(
+    cv_ridge,
+    x,
+    y = reg_train_transform$median_outage_duration_hr,
+    K = 10
+  )
+
 # Lasso
 cv_lasso <- cv.glmnet(x, y, alpha = 1, lambda = lambdas, standardize = TRUE)
 lasso_model <- glmnet(x, y, alpha = 1, lambda = cv_lasso$lambda.min)
@@ -521,21 +549,31 @@ lasso_results <-
     lasso_predict
   )
 
+lasso.cv <- 
+  cvFit(
+    cv_lasso,
+    x,
+    y = reg_train_transform$median_outage_duration_hr,
+    K = 10
+  )
+
 
 ```
 
 ```{r}
 df <-
   tribble(
-    ~model, ~RMSE, ~Rsquare, ~CVerror,
-    "baseline", baseline_results$RMSE, baseline_results$Rsquare, baseline.cv[["cv"]],
+    ~model, ~RMSE, ~Rsquare, ~CVerror, 
+    "baseline", baseline_results$RMSE, baseline_results$Rsquare, baseline.cv[["cv"]], 
     "transform", transform_results$RMSE, transform_results$Rsquare, transform.cv[["cv"]],
-    "all interactions", interact_results$RMSE, interact_results$Rsquare, interact.cv[["cv"]],
-    "transform + interactions", transform_interact_results$RMSE, transform_interact_results$Rsquare, transform_interact.cv[["cv"]],
-    "selected transform + interactions", log_selected_interact_transform_results$RMSE, log_selected_interact_transform_results$Rsquare, log_selected_interact_transform.cv[["cv"]],
-    "ridge", ridge_results$RMSE, ridge_results$Rsquare, NA,
-    "lasso", lasso_results$RMSE, lasso_results$Rsquare, NA,
+    "all interactions", interact_results$RMSE, interact_results$Rsquare, interact.cv[["cv"]], 
+    "transform + interactions", transform_interact_results$RMSE, transform_interact_results$Rsquare, transform_interact.cv[["cv"]], 
+    "selected transform + interactions", log_selected_interact_transform_results$RMSE, log_selected_interact_transform_results$Rsquare, log_selected_interact_transform.cv[["cv"]], 
+    "ridge", ridge_results$RMSE, ridge_results$Rsquare, ridge.cv[["cv"]], 
+    "lasso", lasso_results$RMSE, lasso_results$Rsquare, lasso.cv[["cv"]]
   )
+
+write_rds(df, "~/GitHub/neighborhood-outages/cleaned_data/reg_stats.rds")
 
 ```
 
@@ -654,7 +692,7 @@ plot(
 
 ```{r}
 # Plot Eigenvalue variance from PCA
-factoextra::fviz_eig(pca)
+#factoextra::fviz_eig(pca)
 ```
 
 Around 7-8 components explains about 75% of variance.
