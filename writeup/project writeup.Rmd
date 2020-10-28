@@ -49,8 +49,6 @@ lambdas <- 10^seq(3, -2, by = -.1)
 ## List of outcome variables
 outcome_vars <- c("median_outage_duration_hr", "above_median_cust_affected")
 
-
-
 ## List of covariates
 continuous_vars <-
   names(acs_outages %>% select(-c(all_of(outcome_vars), GEOID)))
@@ -104,7 +102,7 @@ Data processing was a three step process, requiring Census data cleaning, PG&E d
 
 Our continuous response variable is the median outage duration (hours) in each Census tract. We chose this variable because it may serve as a proxy for PG&E service quality (how fast PG&E can bring power back on for communities). Our binary response variable determines if the number of customers affected by outages within a Census tract is above the median. We chose this because it may help us understand what kind of neighborhoods are more heavily impacted by these power outages.
 
-```{r, warning=FALSE, message=FALSE, echo=FALSE, out.height="20%"}
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
 covariate_corr <-
   acs_outages %>%
   select(all_of(continuous_vars), all_of(outcome_vars)) %>%
@@ -136,28 +134,27 @@ Here we will discuss the general modeling process and decisions made in creating
 Our regression model was built to predict our continuous outcome variable, median outage duration (hours), in each tract. Each model we created was trained on a training set comprising 80% of our data. A prediction error and R^2 value were calculated for each model to evaluate how well each fit to the training set. To determine which model was the best, we used K-fold Cross Validation as an estimate of prediction error on the test set.
 
 ```{r, echo=FALSE}
-reg_stats <- read_rds("~/GitHub/neighborhood-outages/cleaned_data/reg_stats.rds")
+reg_stats <- read_rds(paste0(here::here(), "/cleaned_data/reg_stats.rds"))
 
 reg_stats %>% 
   slice(-1) %>% 
-  kable(caption = "Prediction Error, R^2, and CVerror for Regression Models") %>%
+  kable(caption = "Prediction Error, $R^2$, and CVerror for Regression Models") %>%
   kableExtra::kable_classic() %>%
   #format for markdown
   kable_styling(latex_options = "scale_down", font_size = 2)
-
 ```
 
 For a baseline model, we used a basic OLS linear regression as it will minimize the sum of the squared differences between the observed values and the corresponding fitted values. This resulted in a RMSE of 4.032, R^2 value of 0.038. This was not surprising, as our dataset is relatively small and all our covariates, while still important environmental indicators, are from a separate data source. Given that our baseline model had a high RMSE and low R^2 value, we applied a series of modifications to our model. In our GGPairs plot of covariates showed that two covariates, 'prop_latino' and 'prop_less_than_hs' had  heavy-tailed distributions and thus could benefit from log transformations. We transformed the data and ran the baseline model again with transformed covariates. This had a negligible improvement in RMSE and R^2. Knowing that collinearity may be an issue because our covariates were measured as proportions of a series of variables, we also decided to create a model including all interaction terms. This improved RMSE and R^2 to 3.857 and 0.12, respectively, though was expected because the large number of additional covariate terms can result in overfitting of the data. To control for this, we tried only including interaction terms for covariate that had a absolute correlation coefficient of 0.5. This model had an slightly higher RMSE and lower R^squared, but likely overfit the data less than before. Finally, we used ridge and lasso regression techniques to select for the most meaningful covariates. Both these methods had worse results than the baseline, as the baseline was likely overfit the data relatively more than the regularization models. Overall, all our models had poor performance which indicates that our covariates have low predictive power. While we had hoped the demographic and land use data might help us understand PG&E's performance, there are likely other factors.
 
 Alongside calculating RMSE and R^squared to understand the performance of our models on the training set, K-fold Cross Validation was done to estimate generalization error. While also testing our models on a validation set would have produced an unbiased estimate of generalization error, lower error results could have happened by luck and underestimated the generalization error. Our K-fold Cross Validation results produced biased estimates of generalization error because the cross validation was done on the same training dataset. However, each validation was done on subset of our training data. We accept that using CVerror to estimate generalization error will be biased and we will not know the true generalization error until testing our models on the test set.
 
-When looking at the table above, we see that the baseline, transfrom, and selected transform + interaction models have the lowest CVerrors. The simple transform model performs the best across the board, likely because the log transformations allow us to pick up the effects of small changes in the 'prop_latino' and 'prop_less_than_hs' variables on the outcome variable. Overall, all models performed relatively poorly and did not improve much compared to the baseline model. Any improvements are highly optimistic and lower CVerror could be simply attributed to chance. This is partly because the baseline itself was a poor model and more complex models did nothing more than overfit to the training data. Using K-fold Cross Validation as our evaluation of performance, the transform model performed the best and had an estimate for prediction error of 4.066. This model does not overfit the test data as much as the more complex ones, while accounts for the heavy-tailed nature of its covariates.
+When looking at Table 2, we see that the baseline, transfrom, and selected transform + interaction models have the lowest CVerrors. The simple transform model performs the best across the board, likely because the log transformations allow us to pick up the effects of small changes in the 'prop_latino' and 'prop_less_than_hs' variables on the outcome variable. Overall, all models performed relatively poorly and did not improve much compared to the baseline model. Any improvements are highly optimistic and lower CVerror could be simply attributed to chance. This is partly because the baseline itself was a poor model and more complex models did nothing more than overfit to the training data. Using K-fold Cross Validation as our evaluation of performance, the transform model performed the best and had an estimate for prediction error of 4.066. This model does not overfit the test data as much as the more complex ones, while accounts for the heavy-tailed nature of its covariates.
 
 If we take a step back and look at the sample mean of our training data as an even simpler baseline, the average median outage duration across census tracts is 2.34748 hours. When comparing our model performance to this, each model would still perform poorly, predicting a sample mean of potentially 4 hours greater than the real value (technically it could only predict ~2.3 hours lower because time cannot be negative!). When considering the policy implications of this, predicting a power outage that is substantially longer could have negative impacts on communities and hold back appropriate disaster response. However, preparing for longer outages may be smarter in reality given the unpredictable nature of wildfires and natural disasters. It is always better to be safer than sorry.   
 
 In classification, our major goal was to identify as many true positives as possible, because we wanted a model optimized for proactive decision-making. In other words, we were fine with relatively higher false positives, because the model is designed to give warning to particular neighborhood types if they are at higher risk of having high numbers of customers affected by outages. As such our major goals were to reduce mean 0-1 loss and increase sensitivity.
 
-For a baseline, we used a logistic regression of the model including all covariates. This performed fairly well, with a mean 0-1 loss of about .193 and sensitivity of .067. However, given the issues of collinearity pointed out before, we wanted to see if we could develop a better model that reduced these issues. Thus, we used Principal Components Analysis (PCA) to reduce the covariates, and chose to include the first 7 components (which explained about 70% of the variance). Next, we used K-nearest neighbors (KNN) on those first 7 components, and did a 10-fold cross-validation to derive the optimal K (which was 37). Using confusion matrices, we then produced a comparative table between the two models (shown in Table 2). Mean 0-1 loss greatly improved, now about .009 while sensitivity increased to about .095. Obviously other metrics took a hit, including AUC, specificity, and precision. For the purposes of our model though, this was deemed acceptable.
+For a baseline, we used a logistic regression of the model including all covariates. This performed fairly well, with a mean 0-1 loss of about .193 and sensitivity of .067. However, given the issues of collinearity pointed out before, we wanted to see if we could develop a better model that reduced these issues. Thus, we used Principal Components Analysis (PCA) to reduce the covariates, and chose to include the first 7 components (which explained about 70% of the variance). Next, we used K-nearest neighbors (KNN) on those first 7 components, and did a 10-fold cross-validation to derive the optimal K (which was 37). Using confusion matrices, we then produced a comparative table between the two models (shown in Table 3). Mean 0-1 loss greatly improved, now about .009 while sensitivity increased to about .095. Obviously other metrics took a hit, including AUC, specificity, and precision. For the purposes of our model though, this was deemed acceptable.
 
 Overall, there is reason to believe that our model is overly optimistic and biased. While CV was employed to reduce this possibility, the relatively low explanatory power of our covariates make this more likely. Additionally, the number of components chosen was relatively arbitrary. 7 components occurred after the break in the scree plots, but was chosen because it explained an acceptable amount the variance. KNN might have also been a suboptimal classification approach. However, given the constraints of our data, we were content with the KNN model. We felt it made use of the highest explanatory power of the data without overfitting to noise excessively. Hopefully this remains true when we deploy it on the test set.
 
@@ -276,7 +273,7 @@ final_typeII_error <- fn / (fn + tp)
 final_false_discovery <- fp / (tp + fp)
 ```
 
-```{r, warning=FALSE, message=FALSE, echo=FALSE, out.height="20%"}
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
 # confusion matrix comparison
 confusion_matrix_comparison <-
   tibble(
@@ -573,7 +570,7 @@ df <-
     "lasso", lasso_results$RMSE, lasso_results$Rsquare, lasso.cv[["cv"]]
   )
 
-write_rds(df, "~/GitHub/neighborhood-outages/cleaned_data/reg_stats.rds")
+#write_rds(df, "~/GitHub/neighborhood-outages/cleaned_data/reg_stats.rds")
 
 ```
 
@@ -692,7 +689,7 @@ plot(
 
 ```{r}
 # Plot Eigenvalue variance from PCA
-#factoextra::fviz_eig(pca)
+factoextra::fviz_eig(pca)
 ```
 
 Around 7-8 components explains about 75% of variance.
