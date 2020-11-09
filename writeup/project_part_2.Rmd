@@ -1,0 +1,375 @@
+---
+output: pdf_document
+header-includes:
+- \usepackage{booktabs}
+- \usepackage{sectsty} \allsectionsfont{\centering}
+- \usepackage{indentfirst}
+urlcolor: blue
+indent: true
+---
+
+\noindent Matt Alvarez-Nissen and Lilla Petruska
+
+\noindent MS&E 226
+
+\noindent `r format(Sys.time(), "%m/%d/%Y")`
+
+\allsectionsfont{\centering} 
+## MS&E 226 Project Part 2 - Neighborhood Outages
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r message=FALSE, warning=FALSE, echo=FALSE}
+# Please exclude this page from page count
+# Libraries
+library(tidyverse)
+library(caret)
+library(knitr)
+library(kableExtra)
+library(boot)
+
+# Load Data
+acs_outages_train <- 
+  read_csv(paste0(here::here(), "/cleaned_data/acs_outages_train.csv"))
+acs_outages_test <-
+  read_csv(paste0(here::here(), "/cleaned_data/acs_outages_test.csv"))
+
+# Parameters
+lambdas <- 10^seq(3, -2, by = -.1)
+## List of outcome variables
+outcome_vars <- c("median_outage_duration_hr", "above_median_cust_affected")
+
+## List of covariates
+continuous_vars <-
+  names(acs_outages_train %>% select(-c(all_of(outcome_vars), GEOID)))
+
+# Functions
+eval_results <- function(model, true, predicted) {
+  model <- enquo(model)
+  SSE <- sum((predicted - true)^2)
+  SST <- sum((true - mean(true))^2)
+  R_square <- 1 - SSE / SST
+  RMSE = sqrt(SSE/length(true))
+
+  # Model performance metrics
+  data.frame(
+    model = as_label(model),
+    RMSE = RMSE,
+    Rsquare = R_square
+  )
+}
+```
+
+```{r, echo=FALSE}
+# Ignore this chunk for now
+# Regression df
+reg_train <-
+  acs_outages_train %>%
+  select(-c(GEOID, above_median_cust_affected, prop_white, prop_eli, prop_college, prop_owner, rental_vacancy_rate, prop_rural)) %>%
+  drop_na()
+
+# Classification df
+# Set up data for classification (and drop NAs)
+acs_outages_class <- 
+  acs_outages_train %>% 
+  select(
+    -c(GEOID, median_outage_duration_hr)
+  ) %>% 
+  drop_na() 
+
+# Set up data for classification (and drop NAs)
+acs_outages_class_test <- 
+  acs_outages_test %>% 
+  select(
+    -c(GEOID, median_outage_duration_hr)
+  ) %>% 
+  drop_na() 
+
+# Logistic boot model df
+acs_outages_log_train <-
+  acs_outages_train %>% 
+  select(
+    -c(GEOID, median_outage_duration_hr, prop_white, prop_eli, 
+       prop_college, prop_owner, rental_vacancy_rate, prop_rural)
+  ) %>% 
+  drop_na() 
+
+acs_outages_log_test <-
+  acs_outages_test %>% 
+  select(
+    -c(GEOID, median_outage_duration_hr, prop_white, prop_eli, 
+       prop_college, prop_owner, rental_vacancy_rate, prop_rural)
+  ) %>% 
+  drop_na() 
+```
+
+# Prediction on the test set
+## Regression
+
+## Classification
+```{r, echo=FALSE}
+# conduct PCA (to reduce data, especially collinearity)
+# Find variance of each covariate
+train_col_var <- 
+  acs_outages_class %>% 
+  select(-above_median_cust_affected) %>% 
+  mutate(across(everything(), stats::var)) %>% 
+  distinct() %>% 
+  pivot_longer(cols = everything(), names_to = "vars", values_to = "variance") %>% 
+  # filter out 0 variance covariates
+  filter(variance != 0)
+
+# remove zero variance covariates
+class_filter <-
+  acs_outages_class %>% 
+  # remove outcome var as well
+  select(all_of(train_col_var$vars))
+
+# Run PCA
+pca <- prcomp(class_filter, scale = T, center = T)
+```
+
+```{r, echo=FALSE}
+# PCA results
+pca_table_train <- 
+  data.frame(
+    above_median_cust_affected = acs_outages_class[,1] %>% pull(), pca$x
+  ) %>% 
+  #filter to the first 7 components
+  select(above_median_cust_affected:PC7) %>% 
+  bind_cols()
+```
+
+```{r,echo=FALSE}
+# Do 10-fold CV KNN
+set.seed(243)
+# Set train control
+knn_control <- 
+  trainControl(
+    method = "cv", 
+    number = 10
+  )
+
+# Evaluate accuracy of KNN classifiers
+knn_fit <-
+  train(
+    as.factor(above_median_cust_affected) ~ .,
+    method = "knn",
+    # Limit to k = sqrt(n)
+    tuneGrid = expand.grid(k = 1:sqrt(nrow(pca_table_train))),
+    trControl = knn_control,
+    metric = "Accuracy",
+    data = pca_table_train
+  )
+```
+
+```{r, echo=FALSE}
+# create confusion matrix
+confusion_matrix_knn <- confusionMatrix(knn_fit, positive = 1)
+confusion_matrix_knn <- confusion_matrix_knn$table %>% t()
+```
+
+```{r, echo=FALSE}
+# calculate confusion matrix scores
+tn <- confusion_matrix_knn[1,1]
+fn <- confusion_matrix_knn[2,1]
+fp <- confusion_matrix_knn[1,2]
+tp <- confusion_matrix_knn[2,2]
+
+train_01_loss <- (fp + fn) / nrow(acs_outages_class)
+train_sensitivity <- tp / (fn + tp)
+train_specificity <- tn / (tn + fp)
+train_precision <- tp / (tp + fp)
+train_typeI_error <- fp / (tn + fp)
+train_typeII_error <- fn / (fn + tp)
+train_false_discovery <- fp / (tp + fp)
+```
+
+```{r, echo=FALSE}
+# conduct PCA (to reduce data, especially collinearity)
+# Find variance of each covariate
+test_col_var <- 
+  acs_outages_class_test %>% 
+  select(-above_median_cust_affected) %>% 
+  mutate(across(everything(), stats::var)) %>% 
+  distinct() %>% 
+  pivot_longer(cols = everything(), names_to = "vars", values_to = "variance") %>% 
+  # filter out 0 variance covariates
+  filter(variance != 0)
+
+# remove zero variance covariates
+class_filter <-
+  acs_outages_class_test %>% 
+  # remove outcome var as well
+  select(all_of(test_col_var$vars))
+
+# Run PCA
+pca <- prcomp(class_filter, scale = T, center = T)
+```
+
+```{r, echo=FALSE}
+# PCA results
+pca_table_test <- 
+  data.frame(
+    above_median_cust_affected = acs_outages_class_test[,1] %>% pull(), pca$x
+  ) %>% 
+  #filter to the first 7 components
+  select(above_median_cust_affected:PC7) %>% 
+  bind_cols()
+```
+
+```{r,echo=FALSE}
+# Do 10-fold CV KNN
+set.seed(243)
+# Set train control
+knn_control <- 
+  trainControl(
+    method = "cv", 
+    number = 10
+  )
+
+# Evaluate accuracy of KNN classifiers
+knn_fit <-
+  train(
+    as.factor(above_median_cust_affected) ~ .,
+    method = "knn",
+    # Limit to k = sqrt(n)
+    tuneGrid = expand.grid(k = 1:sqrt(nrow(pca_table_test))),
+    trControl = knn_control,
+    metric = "Accuracy",
+    data = pca_table_test
+  )
+```
+
+```{r, echo=FALSE}
+# create confusion matrix
+confusion_matrix_knn <- confusionMatrix(knn_fit, positive = 1)
+confusion_matrix_knn <- confusion_matrix_knn$table %>% t()
+```
+
+```{r, echo=FALSE}
+# calculate confusion matrix scores
+tn <- confusion_matrix_knn[1,1]
+fn <- confusion_matrix_knn[2,1]
+fp <- confusion_matrix_knn[1,2]
+tp <- confusion_matrix_knn[2,2]
+
+test_01_loss <- (fp + fn) / nrow(acs_outages_class)
+test_sensitivity <- tp / (fn + tp)
+test_specificity <- tn / (tn + fp)
+test_precision <- tp / (tp + fp)
+test_typeI_error <- fp / (tn + fp)
+test_typeII_error <- fn / (fn + tp)
+test_false_discovery <- fp / (tp + fp)
+```
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+# confusion matrix comparison
+confusion_matrix_comparison <-
+  tibble(
+    metric =
+      c("Mean 0-1 Loss", "Precision", "Sensitivity", "Specificity",
+        "Type I Error Rate", "Type II Error Rate", "False Discovery Rate"),
+    train = 
+      c(train_01_loss, train_precision, train_sensitivity, train_specificity,
+        train_typeI_error, train_typeII_error, train_false_discovery),
+    test = 
+      c(test_01_loss, test_precision, test_sensitivity, test_specificity,
+        test_typeI_error, test_typeII_error, test_false_discovery)
+  ) %>% 
+  kable(caption = "Above Median Customer Affected Confusion Matrix Metrics") %>% 
+  kableExtra::kable_classic() %>% 
+  #format for markdown
+  kable_styling(latex_options="scale_down")
+confusion_matrix_comparison
+```
+
+Mean 0-1 loss increased slightly, but sensitivity dropped. Other metrics improved, like precision, while others worsened, like the Type II Error Rate. Given our focus on 0-1 loss and sensitivity, this model performed fine. It would have been preferable to maintain a higher sensitivity rate, but it is not clear how possible this is due to the low explanatory nature of the covariates.
+
+# Inference
+## Parts a) and b) below
+```{r}
+# start with basic logistic model (train)
+logit_mod_train <-
+  glm(
+    above_median_cust_affected ~ .,
+    data = acs_outages_log_train, 
+    family = binomial
+  )
+summary(logit_mod_train)
+
+# PCA logistic model (train) - NOT SURE IF WE SHOULD USE
+# pca_logit_mod_train <-
+#   glm(
+#     above_median_cust_affected ~ .,
+#     data = pca_table_train, 
+#     family = binomial
+#   )
+# summary(pca_logit_mod_train)
+```
+
+```{r}
+# start with basic logistic model (test)
+logit_mod_test <-
+  glm(
+    above_median_cust_affected ~ .,
+    data = acs_outages_log_test, 
+    family = binomial
+  )
+summary(logit_mod_test)
+
+# PCA logistic model (test) - NOT SURE IF WE SHOULD USE
+# pca_logit_mod_test <-
+#   glm(
+#     above_median_cust_affected ~ .,
+#     data = pca_table_test,
+#     family = binomial
+#   )
+# summary(pca_logit_mod_train)
+```
+
+## Part c)
+```{r}
+# bootstrap CI for each reg coefficient
+
+# create function to return coefficients
+boot_coefficients <- function(data, indices) {
+  data <- data[indices,]
+  
+  logit_mod <-
+    glm(
+      above_median_cust_affected ~ .,
+      data = data, 
+      family = binomial
+    )
+  coefficients(logit_mod)
+}
+# Need to adjust R value (number of replicates, not sure what to use)
+logit_boot <- boot(acs_outages_log_train, boot_coefficients, R = 2000)
+
+# determine CI for each coefficient
+coef_ci_table <- c()
+for (i in 1:ncol(acs_outages_log_train)) {
+  result <- boot.ci(logit_boot, index = i, type = "norm")
+  coef_ci_table <- 
+    result$normal %>% 
+    as.data.frame() %>% 
+    rename(lower_ci = V2, upper_ci = V3) %>% 
+    rownames_to_column(var = "coefficient") %>% 
+    bind_rows(coef_ci_table)
+}
+
+# merge CI table with original coefficient values
+coef_comparison_table <-
+  coefficients(logit_mod_train) %>% 
+  as.data.frame() %>% 
+  rownames_to_column(var = "coefficient") %>% 
+  rename(value = ".") %>% 
+  left_join(coef_ci_table, by = "coefficient")
+coef_comparison_table
+```
+
+
+# Discussion
