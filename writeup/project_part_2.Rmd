@@ -368,7 +368,11 @@ coef_comparison_table <-
   rownames_to_column(var = "coefficient") %>% 
   rename(value = ".") %>% 
   left_join(coef_ci_table, by = "coefficient")
-coef_comparison_table
+coef_comparison_table %>% 
+  kable(caption = "Coefficient Confidence Intervals") %>% 
+  kableExtra::kable_classic() %>% 
+  #format for markdown
+  kable_styling(latex_options="scale_down")
 ```
 
 
