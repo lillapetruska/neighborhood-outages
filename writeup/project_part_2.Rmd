@@ -302,7 +302,12 @@ logit_mod_train <-
   # stepwise selection by AIC
   MASS::stepAIC(trace = FALSE, direction = "both")
 summary(logit_mod_train)
-acs_outage_var_select <- logit_mod_train$model
+
+# extract just the selected variables to run through the bootstrap
+acs_outage_var_select <-
+  acs_outages_class_train %>% 
+  select(above_median_cust_affected, any_of(names(logit_mod_train$coefficients)))
+
 ```
 
 # Ignore the following two chunks
@@ -349,7 +354,6 @@ acs_outage_var_select <- logit_mod_train$model
 ## Part c)
 ```{r}
 # bootstrap CI for each reg coefficient
-
 # create function to return coefficients
 boot_coefficients <- function(data, indices) {
   data <- data[indices,]
@@ -358,23 +362,23 @@ boot_coefficients <- function(data, indices) {
     glm(
       above_median_cust_affected ~ .,
       # use reduced variables dataset
-      data = acs_outage_var_select, 
+      data = data, 
       family = binomial
-    ) 
+    )
   coefficients(logit_mod)
 }
 
 # Need to adjust R value (number of replicates, not sure what to use)
 logit_boot <- boot(acs_outage_var_select, boot_coefficients, R = 2000)
 
-# NOTE: index is broken for some reason, need to investigate further
-# determine CI for each coefficient
+# Loop through the results and create table of coefficient CIs
 coef_ci_table <- c()
 for (i in 1:ncol(acs_outage_var_select)) {
+  # run the boot CI on each coefficient
   result <- boot.ci(logit_boot, index = i, type = "norm")
   coef_ci_table <- 
     result$normal %>% 
-    as.data.frame() #%>% 
+    as.data.frame() %>% 
     rename(lower_ci = V2, upper_ci = V3) %>% 
     rownames_to_column(var = "coefficient") %>% 
     bind_rows(coef_ci_table)
