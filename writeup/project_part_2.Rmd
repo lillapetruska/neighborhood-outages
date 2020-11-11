@@ -63,7 +63,6 @@ eval_results <- function(model, true, predicted) {
 ```
 
 ```{r, echo=FALSE}
-# Ignore this chunk for now
 # Regression df
 reg_train <-
   acs_outages_train %>%
@@ -72,7 +71,7 @@ reg_train <-
 
 # Classification df
 # Set up data for classification (and drop NAs)
-acs_outages_class <- 
+acs_outages_class_train <- 
   acs_outages_train %>% 
   select(
     -c(GEOID, median_outage_duration_hr)
@@ -87,22 +86,23 @@ acs_outages_class_test <-
   ) %>% 
   drop_na() 
 
-# Logistic boot model df
-acs_outages_log_train <-
-  acs_outages_train %>% 
-  select(
-    -c(GEOID, median_outage_duration_hr, prop_white, prop_eli, 
-       prop_college, prop_owner, rental_vacancy_rate, prop_rural)
-  ) %>% 
-  drop_na() 
-
-acs_outages_log_test <-
-  acs_outages_test %>% 
-  select(
-    -c(GEOID, median_outage_duration_hr, prop_white, prop_eli, 
-       prop_college, prop_owner, rental_vacancy_rate, prop_rural)
-  ) %>% 
-  drop_na() 
+# following code is unncessary (for now)
+# # Logistic boot model df
+# acs_outages_log_train <-
+#   acs_outages_train %>% 
+#   select(
+#     -c(GEOID, median_outage_duration_hr, prop_white, prop_eli, 
+#        prop_college, prop_owner, rental_vacancy_rate, prop_rural)
+#   ) %>% 
+#   drop_na() 
+# 
+# acs_outages_log_test <-
+#   acs_outages_test %>% 
+#   select(
+#     -c(GEOID, median_outage_duration_hr, prop_white, prop_eli, 
+#        prop_college, prop_owner, rental_vacancy_rate, prop_rural)
+#   ) %>% 
+#   drop_na() 
 ```
 
 # Prediction on the test set
@@ -113,7 +113,7 @@ acs_outages_log_test <-
 # conduct PCA (to reduce data, especially collinearity)
 # Find variance of each covariate
 train_col_var <- 
-  acs_outages_class %>% 
+  acs_outages_class_train %>% 
   select(-above_median_cust_affected) %>% 
   mutate(across(everything(), stats::var)) %>% 
   distinct() %>% 
@@ -123,7 +123,7 @@ train_col_var <-
 
 # remove zero variance covariates
 class_filter <-
-  acs_outages_class %>% 
+  acs_outages_class_train %>% 
   # remove outcome var as well
   select(all_of(train_col_var$vars))
 
@@ -135,7 +135,7 @@ pca <- prcomp(class_filter, scale = T, center = T)
 # PCA results
 pca_table_train <- 
   data.frame(
-    above_median_cust_affected = acs_outages_class[,1] %>% pull(), pca$x
+    above_median_cust_affected = acs_outages_class_train[,1] %>% pull(), pca$x
   ) %>% 
   #filter to the first 7 components
   select(above_median_cust_affected:PC7) %>% 
@@ -178,7 +178,7 @@ fn <- confusion_matrix_knn[2,1]
 fp <- confusion_matrix_knn[1,2]
 tp <- confusion_matrix_knn[2,2]
 
-train_01_loss <- (fp + fn) / nrow(acs_outages_class)
+train_01_loss <- (fp + fn) / nrow(acs_outages_class_train)
 train_sensitivity <- tp / (fn + tp)
 train_specificity <- tn / (tn + fp)
 train_precision <- tp / (tp + fp)
@@ -256,7 +256,7 @@ fn <- confusion_matrix_knn[2,1]
 fp <- confusion_matrix_knn[1,2]
 tp <- confusion_matrix_knn[2,2]
 
-test_01_loss <- (fp + fn) / nrow(acs_outages_class)
+test_01_loss <- (fp + fn) / nrow(acs_outages_class_test)
 test_sensitivity <- tp / (fn + tp)
 test_specificity <- tn / (tn + fp)
 test_precision <- tp / (tp + fp)
@@ -286,19 +286,35 @@ confusion_matrix_comparison <-
 confusion_matrix_comparison
 ```
 
-Mean 0-1 loss increased slightly, but sensitivity dropped. Other metrics improved, like precision, while others worsened, like the Type II Error Rate. Given our focus on 0-1 loss and sensitivity, this model performed fine. It would have been preferable to maintain a higher sensitivity rate, but it is not clear how possible this is due to the low explanatory nature of the covariates.
+Mean 0-1 loss increased significantly and sensitivity dropped. Other metrics improved, like precision, while others worsened, like the Type II Error Rate. Given our focus on 0-1 loss and sensitivity, this model had an underwhelming performance. It would have been preferable to maintain a higher sensitivity rate with a lower 0-1 loss, but it is not clear how possible this is due to the low explanatory nature of the covariates.
 
 # Inference
 ## Parts a) and b) below
 ```{r}
+# variable selection (non-PCA)
 # start with basic logistic model (train)
 logit_mod_train <-
   glm(
     above_median_cust_affected ~ .,
-    data = acs_outages_log_train, 
+    data = acs_outages_class_train, 
     family = binomial
-  )
+  ) %>% 
+  # stepwise selection by AIC
+  MASS::stepAIC(trace = FALSE, direction = "both")
 summary(logit_mod_train)
+acs_outage_var_select <- logit_mod_train$model
+```
+
+# Ignore the following two chunks
+```{r}
+# # start with basic logistic model (train)
+# logit_mod_train <-
+#   glm(
+#     above_median_cust_affected ~ .,
+#     data = acs_outages_log_train, 
+#     family = binomial
+#   )
+# summary(logit_mod_train)
 
 # PCA logistic model (train) - NOT SURE IF WE SHOULD USE
 # pca_logit_mod_train <-
@@ -311,14 +327,14 @@ summary(logit_mod_train)
 ```
 
 ```{r}
-# start with basic logistic model (test)
-logit_mod_test <-
-  glm(
-    above_median_cust_affected ~ .,
-    data = acs_outages_log_test, 
-    family = binomial
-  )
-summary(logit_mod_test)
+# # start with basic logistic model (test)
+# logit_mod_test <-
+#   glm(
+#     above_median_cust_affected ~ .,
+#     data = acs_outages_log_test, 
+#     family = binomial
+#   )
+# summary(logit_mod_test)
 
 # PCA logistic model (test) - NOT SURE IF WE SHOULD USE
 # pca_logit_mod_test <-
@@ -341,21 +357,24 @@ boot_coefficients <- function(data, indices) {
   logit_mod <-
     glm(
       above_median_cust_affected ~ .,
-      data = data, 
+      # use reduced variables dataset
+      data = acs_outage_var_select, 
       family = binomial
-    )
+    ) 
   coefficients(logit_mod)
 }
-# Need to adjust R value (number of replicates, not sure what to use)
-logit_boot <- boot(acs_outages_log_train, boot_coefficients, R = 2000)
 
+# Need to adjust R value (number of replicates, not sure what to use)
+logit_boot <- boot(acs_outage_var_select, boot_coefficients, R = 2000)
+
+# NOTE: index is broken for some reason, need to investigate further
 # determine CI for each coefficient
 coef_ci_table <- c()
-for (i in 1:ncol(acs_outages_log_train)) {
+for (i in 1:ncol(acs_outage_var_select)) {
   result <- boot.ci(logit_boot, index = i, type = "norm")
   coef_ci_table <- 
     result$normal %>% 
-    as.data.frame() %>% 
+    as.data.frame() #%>% 
     rename(lower_ci = V2, upper_ci = V3) %>% 
     rownames_to_column(var = "coefficient") %>% 
     bind_rows(coef_ci_table)
