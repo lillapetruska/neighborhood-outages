@@ -69,6 +69,11 @@ reg_train <-
   select(-c(GEOID, above_median_cust_affected, prop_white, prop_eli, prop_college, prop_owner, rental_vacancy_rate, prop_rural)) %>%
   drop_na()
 
+reg_test <- 
+  acs_outages_test %>% 
+  select(-c(GEOID, above_median_cust_affected, prop_white, prop_eli, prop_college, prop_owner, rental_vacancy_rate, prop_rural)) %>%
+  drop_na()
+
 # Classification df
 # Set up data for classification (and drop NAs)
 acs_outages_class_train <- 
@@ -85,6 +90,22 @@ acs_outages_class_test <-
     -c(GEOID, median_outage_duration_hr)
   ) %>% 
   drop_na() 
+
+# Transform covariates for linear regression
+reg_train_transform <-
+  reg_train %>%
+   mutate(
+    prop_latino = log10(prop_latino + 1),
+    prop_less_than_hs = log10(prop_less_than_hs + 1)
+  )
+
+reg_test_transform <-
+  reg_test %>%
+   mutate(
+    prop_latino = log10(prop_latino + 1),
+    prop_less_than_hs = log10(prop_less_than_hs + 1)
+  )
+
 
 # following code is unncessary (for now)
 # # Logistic boot model df
@@ -107,6 +128,13 @@ acs_outages_class_test <-
 
 # Prediction on the test set
 ## Regression
+
+```{r, ech0=FALSE}
+lr_transform <- lm(median_outage_duration_hr ~ ., data = reg_train_transform)
+
+transform_predict <- predict(lr_transform, reg_test_transform)
+RMSE(reg_test_transform$median_outage_duration_hr, transform_predict)
+```
 
 ## Classification
 ```{r, echo=FALSE}
@@ -400,3 +428,42 @@ coef_comparison_table %>%
 
 
 # Discussion
+
+a) How would you expect your models to be used practically? Do you think they would primarily
+be used for prediction, for inference, or for both? What decisions do you think your
+models would guide, and what pitfalls do you see in using your models to make these decisions?
+
+While PG&E and other electric utilities monitor their outages and service quality through numerous quantitative metrics, including spatial distribution, there is little emphasis on the communities that are affected by these disruptions in service. Of course, power outages impact residential, commerical, and industrial customers in different ways. However, we must also consider the equity implications of who is being impacted by irregular electricity service. Our models aim to 
+
+b) How well would your models hold up over time (i.e., how often do you think they should be
+refitted)? Why?
+
+Our models were fitted on power outage data from the last several months, but PG&E and other utilites are constantly collecting new data on their service regularity and variability. Patterns in the frequency and duration of power outages will likely change over time due to the prevalence of wildfires, improvements in transmission and distribution infrastructure, and increased ability to predict wildfire behavior and movement. While the United States Census Bureau performs the census every ten years, the American Community Survey releases new data yearly. Our demographic data is thus relatively up to date and provides a current snapshot of census tract demographics. Therefore, our model will need to be refitted regularly with the newest data on both outages and demographic data. 
+
+** how to integrate changes in land use, satellite data 
+
+c) Are there choices you made in your data analysis, that you would want to make sure any
+one (e.g., a manager, a client, etc.) that uses your models is aware of? Examples here might
+include approaches to data cleaning; data transformations that you chose; vulnerability to
+overfitting, multiple hypothesis testing, or post-selection inference; etc.
+
+Our 
+
+d) If you could, how would you change the data collection process? In particular, are there
+reasonable covariates you would like to collect, that were not present in the data?
+
+PG&E only provides a single coordinate for each outage. Therefore there is not reliable information concerning the extent of the entire affected outage area. We georeferenced the outage coordinate to determine which census tract it corresponded to, though this only allowed us to infer what communities a specific power outage affected.
+
+PG&E does not provide a data dictionary, so we must infer what the different variables mean based on their names. 
+
+Because we only used PG&E outage data, our model was design to elucidate utility service quality in primarily Northern California census tracts. Our entire dataset was only 2722 rows, which is relatively small and may have impacted our ability to find meaningful insights. There are other major electric utilites in California, such as Southern California Edison and San Diego Gas and Electric, that also serve geographies severely impacted by wildfires and with socioeconomic disparities. By building a dataset that included outage data on all 8,057 California census tracts, we would have a more complete picture of electric utility service in California. This would also allow us to understand differences in service between utilities.
+
+e) If you were to attack the same dataset again, what would you do differently?
+
+When embarking on this topic, we believed that demographic characteristics of census tracts would have some predictive power to understand why PG&E's power outages were distributed the way they are. Historically, the quality of public services differ vastly based on communities' socioeconomic status, race, and wealth. After completing our analysis, there are likely many other factors at play in determining PG&E's ability to return power to its customers. Environmental and geographic factors, as well as PG&E's own behind-the-scenes decision making about where to cut power, will surely influence the prevalence and duration of power outages. Environmental and geographic factors that could have benefitted our model include the size, proximity, and presence of wildfire; quality of transmission and distribution infrastructure (including powerlines and voltage boxes); more detailed land cover data (vegetation, temperative, albedo, forested area); and building infrastructure data (industrial and commercial offtakers use more electricity than residential customers). Perhaps it would have been wiser to try to model how PG&E itself makes choices about where and how long to cut power for. 
+
+On one hand, it is a good thing that PG&E's service does not seemingly discriminate against certain groups based on the proportion of that demographic indicator present in a census tract. 
+
+
+
+
