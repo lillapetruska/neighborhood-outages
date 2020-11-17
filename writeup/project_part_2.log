@@ -1,4 +1,4 @@
-This is pdfTeX, Version 3.14159265-2.6-1.40.21 (TeX Live 2020) (preloaded format=pdflatex 2020.4.7)  15 NOV 2020 21:18
+This is pdfTeX, Version 3.14159265-2.6-1.40.21 (TeX Live 2020) (preloaded format=pdflatex 2020.4.7)  16 NOV 2020 13:00
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -609,95 +609,100 @@ LaTeX Info: Redefining \nameref on input line 127.
 * \@reversemarginfalse
 * (1in=72.27pt=25.4mm, 1cm=28.453pt)
 
+
+Underfull \hbox (badness 3291) in paragraph at lines 147--155
+[]\T1/lmr/m/n/10 (+20) Our best per-form-ing lin-ear re-gres-sion model trans-f
+ormed two co-vari-ates, prop_latino and
+ []
+
+LaTeX Font Info:    Trying to load font information for T1+lmtt on input line 1
+57.
+(/usr/local/texlive/2020/texmf-dist/tex/latex/lm/t1lmtt.fd
+File: t1lmtt.fd 2009/10/30 v1.6 Font defs for Latin Modern
+)
+LaTeX Font Info:    Font shape `T1/lmtt/bx/n' in size <10> not available
+(Font)              Font shape `T1/lmtt/b/n' tried instead on input line 158.
 LaTeX Font Info:    Trying to load font information for OT1+lmr on input line 1
-73.
+97.
 (/usr/local/texlive/2020/texmf-dist/tex/latex/lm/ot1lmr.fd
 File: ot1lmr.fd 2009/10/30 v1.6 Font defs for Latin Modern
 )
 LaTeX Font Info:    Trying to load font information for OML+lmm on input line 1
-73.
+97.
 (/usr/local/texlive/2020/texmf-dist/tex/latex/lm/omllmm.fd
 File: omllmm.fd 2009/10/30 v1.6 Font defs for Latin Modern
 )
 LaTeX Font Info:    Trying to load font information for OMS+lmsy on input line 
-173.
+197.
 (/usr/local/texlive/2020/texmf-dist/tex/latex/lm/omslmsy.fd
 File: omslmsy.fd 2009/10/30 v1.6 Font defs for Latin Modern
 )
 LaTeX Font Info:    Trying to load font information for OMX+lmex on input line 
-173.
+197.
 (/usr/local/texlive/2020/texmf-dist/tex/latex/lm/omxlmex.fd
 File: omxlmex.fd 2009/10/30 v1.6 Font defs for Latin Modern
 )
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <10> on input line 173.
+(Font)              <10> on input line 197.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <7> on input line 173.
+(Font)              <7> on input line 197.
 LaTeX Font Info:    External font `lmex10' loaded for size
-(Font)              <5> on input line 173.
-LaTeX Font Info:    Trying to load font information for U+msa on input line 173
+(Font)              <5> on input line 197.
+LaTeX Font Info:    Trying to load font information for U+msa on input line 197
 .
 (/usr/local/texlive/2020/texmf-dist/tex/latex/amsfonts/umsa.fd
 File: umsa.fd 2013/01/14 v3.01 AMS symbols A
 ) (/usr/local/texlive/2020/texmf-dist/tex/latex/microtype/mt-msa.cfg
 File: mt-msa.cfg 2006/02/04 v1.1 microtype config. file: AMS symbols (a) (RS)
 )
-LaTeX Font Info:    Trying to load font information for U+msb on input line 173
+LaTeX Font Info:    Trying to load font information for U+msb on input line 197
 .
 (/usr/local/texlive/2020/texmf-dist/tex/latex/amsfonts/umsb.fd
 File: umsb.fd 2013/01/14 v3.01 AMS symbols B
 ) (/usr/local/texlive/2020/texmf-dist/tex/latex/microtype/mt-msb.cfg
 File: mt-msb.cfg 2005/06/01 v1.0 microtype config. file: AMS symbols (b) (RS)
-)
-LaTeX Font Info:    Trying to load font information for T1+lmtt on input line 1
-91.
-(/usr/local/texlive/2020/texmf-dist/tex/latex/lm/t1lmtt.fd
-File: t1lmtt.fd 2009/10/30 v1.6 Font defs for Latin Modern
-)
-LaTeX Font Info:    Font shape `T1/lmtt/bx/n' in size <10> not available
-(Font)              Font shape `T1/lmtt/b/n' tried instead on input line 195.
-[1{/usr/local/texlive/2020/texmf-var/fonts/map/pdftex/updmap/pdftex.map}pdfTeX 
-warning (ext4): destination with the same identifier (name{table.1}) has been a
-lready used, duplicate ignored
+) [1{/usr/local/texlive/2020/texmf-var/fonts/map/pdftex/updmap/pdftex.map}pdfTe
+X warning (ext4): destination with the same identifier (name{table.1}) has been
+ already used, duplicate ignored
 
 \AtBegShi@Output ...ipout \box \AtBeginShipoutBox 
                                                   \fi \fi 
-l.204 \end{Shaded}
-                  
+l.214 \begin{Shaded}
+                    
 
 ]
-Overfull \hbox (7.99359pt too wide) in paragraph at lines 249--249
+Overfull \hbox (7.99359pt too wide) in paragraph at lines 273--273
 []\T1/lmtt/m/n/10 ## glm(formula = above_median_cust_affected ~ prop_white + pr
 op_black_or_african_american +[] 
  []
 
 LaTeX Font Info:    Trying to load font information for TS1+lmtt on input line 
-249.
+273.
 (/usr/local/texlive/2020/texmf-dist/tex/latex/lm/ts1lmtt.fd
 File: ts1lmtt.fd 2009/10/30 v1.6 Font defs for Latin Modern
-) [2] [3] [4pdfTeX warning (ext4): destination with the same identifier (name{t
-able.2}) has been already used, duplicate ignored
+) [2] [3] [4] [5pdfTeX warning (ext4): destination with the same identifier (na
+me{table.2}) has been already used, duplicate ignored
 
 \AtBegShi@Output ...ipout \box \AtBeginShipoutBox 
                                                   \fi \fi 
-l.409 
-      ]
-Package atveryend Info: Empty hook `BeforeClearDocument' on input line 512.
-[5]
-Package atveryend Info: Empty hook `AfterLastShipout' on input line 512.
+l.507 \end{enumerate}
+                     ]
+Package atveryend Info: Empty hook `BeforeClearDocument' on input line 564.
+[6]
+Package atveryend Info: Empty hook `AfterLastShipout' on input line 564.
 (./project_part_2.aux)
-Package atveryend Info: Executing hook `AtVeryEndDocument' on input line 512.
-Package atveryend Info: Empty hook `AtEndAfterFileList' on input line 512.
-Package atveryend Info: Empty hook `AtVeryVeryEnd' on input line 512.
+Package atveryend Info: Executing hook `AtVeryEndDocument' on input line 564.
+Package atveryend Info: Empty hook `AtEndAfterFileList' on input line 564.
+Package atveryend Info: Empty hook `AtVeryVeryEnd' on input line 564.
  ) 
 Here is how much of TeX's memory you used:
- 14733 strings out of 480608
- 216518 string characters out of 5903631
- 535654 words of memory out of 5000000
- 30267 multiletter control sequences out of 15000+600000
- 562454 words of font info for 68 fonts, out of 8000000 for 9000
+ 14751 strings out of 480608
+ 216722 string characters out of 5903631
+ 535698 words of memory out of 5000000
+ 30270 multiletter control sequences out of 15000+600000
+ 562952 words of font info for 74 fonts, out of 8000000 for 9000
  1141 hyphenation exceptions out of 8191
- 41i,10n,42p,638b,371s stack positions out of 5000i,500n,10000p,200000b,80000s
+ 41i,10n,42p,638b,474s stack positions out of 5000i,500n,10000p,200000b,80000s
 {/usr/local/texlive/2020/texmf-dist/fonts/enc/dvips/lm/lm-ts1.enc}{/usr/local
 /texlive/2020/texmf-dist/fonts/enc/dvips/lm/lm-ec.enc}</usr/local/texlive/2020/
 texmf-dist/fonts/type1/public/lm/lmbx12.pfb></usr/local/texlive/2020/texmf-dist
@@ -705,10 +710,10 @@ texmf-dist/fonts/type1/public/lm/lmbx12.pfb></usr/local/texlive/2020/texmf-dist
 1/public/lm/lmtk10.pfb></usr/local/texlive/2020/texmf-dist/fonts/type1/public/l
 m/lmtt10.pfb></usr/local/texlive/2020/texmf-dist/fonts/type1/public/lm/lmtti10.
 pfb>
-Output written on project_part_2.pdf (5 pages, 152576 bytes).
+Output written on project_part_2.pdf (6 pages, 156268 bytes).
 PDF statistics:
- 112 PDF objects out of 1000 (max. 8388607)
- 99 compressed objects within 1 object stream
- 31 named destinations out of 1000 (max. 500000)
- 6217 words of extra memory for PDF output out of 10000 (max. 10000000)
+ 122 PDF objects out of 1000 (max. 8388607)
+ 107 compressed objects within 2 object streams
+ 34 named destinations out of 1000 (max. 500000)
+ 6225 words of extra memory for PDF output out of 10000 (max. 10000000)
 
