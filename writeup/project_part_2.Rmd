@@ -139,6 +139,9 @@ RMSE(reg_test_transform$median_outage_duration_hr, transform_predict)
 The resulting RMSE is 3.40194, which is lower than the CVerror. 
 
 ## Classification
+
+Our best performing classification model used principal components analysis (PCA) to reduce variables and to account for the colinearity of our covariates. Following PCA, we then used K-Nearest Neighbors (KNN) to determine if an outage affected more than the average amount of customers. Our focus was on reducing 0-1 loss and increasing sensitivity.
+
 ```{r, echo=FALSE}
 # conduct PCA (to reduce data, especially collinearity)
 # Find variance of each covariate
@@ -316,7 +319,7 @@ confusion_matrix_comparison <-
 confusion_matrix_comparison
 ```
 
-Mean 0-1 loss increased significantly and sensitivity dropped. Other metrics improved, like precision, while others worsened, like the Type II Error Rate. Given our focus on 0-1 loss and sensitivity, this model had an underwhelming performance. It would have been preferable to maintain a higher sensitivity rate with a lower 0-1 loss, but it is not clear how possible this is due to the low explanatory nature of the covariates.
+On the test set, it is apparent that mean 0-1 loss increased significantly and sensitivity dropped. Other metrics improved, like precision, while others worsened, like the Type II Error Rate. Given our focus on 0-1 loss and sensitivity, this model had an underwhelming performance. It would have been preferable to maintain a higher sensitivity rate with a lower 0-1 loss, but it is not clear how possible this is due to the low explanatory nature of the covariates.
 
 # Inference
 ## Parts a) and b) below
@@ -340,46 +343,32 @@ acs_outage_var_select <-
 
 ```
 
-# Ignore the following two chunks
-```{r}
-# # start with basic logistic model (train)
-# logit_mod_train <-
-#   glm(
-#     above_median_cust_affected ~ .,
-#     data = acs_outages_log_train, 
-#     family = binomial
-#   )
-# summary(logit_mod_train)
+* For your chosen model, look at which coefficients are significant in the regression output,
+  according to R. In words, describe what statistical significance means for these coefficients.
+  Do you believe the results? Why or why not?
 
-# PCA logistic model (train) - NOT SURE IF WE SHOULD USE
-# pca_logit_mod_train <-
-#   glm(
-#     above_median_cust_affected ~ .,
-#     data = pca_table_train, 
-#     family = binomial
-#   )
-# summary(pca_logit_mod_train)
-```
+For this task, we decided to use a logistic model for classification. Due to the high number of covariates, we used stepwise regression (both directions) to select for variables. The stepwise selection highlighted proportions of white, Black/African American, American Indian and Alaska Native, and multi-racial people, as well as proportion owners, proportion of rural land, and the number of outages by square kilometer. By definition, each chosen covariate in the final model is significant at some level. In other words, these variables are only significant in so far are they are significant compared to the excluded covariates. Therefore, we do not put a lot of stock in the results - as it's quite likely that there are other covariates with much stronger explanatory power that were not included or available in original dataset. Additionally, stepwise selection does not consider all possible models and may be missing important context. We ultimately chose to use stepwise selection due to computational limitations, the low explanatory power of the data itself, and the presence of colinearity.
 
 ```{r}
-# # start with basic logistic model (test)
-# logit_mod_test <-
-#   glm(
-#     above_median_cust_affected ~ .,
-#     data = acs_outages_log_test, 
-#     family = binomial
-#   )
-# summary(logit_mod_test)
-
-# PCA logistic model (test) - NOT SURE IF WE SHOULD USE
-# pca_logit_mod_test <-
-#   glm(
-#     above_median_cust_affected ~ .,
-#     data = pca_table_test,
-#     family = binomial
-#   )
-# summary(pca_logit_mod_train)
+# variable selection (non-PCA)
+# start with basic logistic model (test)
+logit_mod_test <-
+  glm(
+    above_median_cust_affected ~ .,
+    data = acs_outages_class_test, 
+    family = binomial
+  ) %>% 
+  # stepwise selection by AIC
+  MASS::stepAIC(trace = FALSE, direction = "both")
+summary(logit_mod_test)
 ```
+
+
+* Now fit your chosen model on the test data, and look at whether the same coefficients are
+  significant. Did anything change in doing so? If so, explain any differences that you found,
+  and reflect on why they might be there.
+  
+Running the logistic model and stepwise selection on the test data produced different results - proportions of white, Black/African American, and multi-racial people, as well as number of outages by square kilometer remain, but the test data suggests using proportion of Asian people, proportion of college-educated people, and proportion of high school-educated people. These differences are most likely due to the smaller sample size of the test set and the presence of bias. It is likely that in the census tracts available in the test set, it just so happens that education has a more significant relationship with outage size than in the population data.
 
 ## Part c)
 ```{r}
@@ -427,16 +416,44 @@ coef_comparison_table %>%
   #format for markdown
   kable_styling(latex_options="scale_down")
 ```
-# Inference Discussion
-Do you believe collinearity is impacting your results? Be specific.
 
-Comment on post-selection inference: What aspects of your model-building and inference
+No coefficients lie outside the range of the 95% confidence interval after running the reduced logistic model through the bootstrap. Some of the intervals of relatively large, however, which is of concern (i.e, for proportion multi-racial or proportion American Indian and Alaska Native). Additionally, the fact that proportion of owners has a confidence interval that changes signs is worth noting.
+
+# Inference Discussion
+• If your chosen model does not include all covariates you had available, compare the significant coefficients in your chosen model to the significant coefficients in a model that includes
+all covariates. Did the significant coefficients change? If so, explain the differences.
+
+```{r}
+# stepwise logistic model (train)
+summary(logit_mod_train)
+# baseline logistic model (train)
+# start with basic logistic model (train)
+logit_base_train <-
+  glm(
+    above_median_cust_affected ~ .,
+    data = acs_outages_class_train, 
+    family = binomial
+  )
+summary(logit_base_train)
+```
+There is some change in significance of coefficients between the chosen model (which does not have all variables) and the full logistic model. For instance, the proportion of owners is not significant at all in the full model full. Additionally, the proportion of Asian people is highly significant in the full model, but is not present at all in the reduce model. Finally, the degree of significance between covariates in both models differs.
+
+* Do you believe collinearity is impacting your results? Be specific.
+
+Yes, collinearity is almost certainly impacting the results. Even in the reduced model, there are multiple covariates that relate to proportions by race - which are certainly collinear variables. The most important impact of this is likely born out in the stepwise selection - the algorithm is choosing artificially inflated covariates to be part of the reduced model.
+
+* Comment on post-selection inference: What aspects of your model-building and inference
 process that might bias your determination of which coefficients are significant?
+
+Using the stepwise approach could have biased the initial model in its determination of which covariates were most influential. Again, the issue of collinearity plagues our dataset, and the fact that so many of the final variables in our reduced model with racial demographic proportions highlights this fact. This reduction could have excluded important explanatory variables.
+
+Not really sure what else to add here.
 
 We should consider external validation with new data and specifically integrating data from other California electric utilites and census tracts to strengthen the case for a particular relationship. 
 
 
-Are confidence intervals wider or narrower on test set? THey should be wider because we are using less data.
+
+Are confidence intervals wider or narrower on test set? THey should be wider because we are using less data. @Lilla - we didn't produce confidence intervals on the test set.
 
 
 # Discussion
