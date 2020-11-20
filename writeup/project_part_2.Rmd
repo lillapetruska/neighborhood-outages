@@ -17,6 +17,9 @@ indent: true
 \allsectionsfont{\centering} 
 ## MS&E 226 Project Part 2 - Neighborhood Outages
 
+
+We investigated Pacific Gas & Electric (PG&E) power outages and demographic factors that influence their scope (temporally and spatially). Specifically, we asked the question: are there factors in census tracts that impact PG&E’s service to its customers and response to such power outages?
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
@@ -29,12 +32,14 @@ library(caret)
 library(knitr)
 library(kableExtra)
 library(boot)
+library(corrr)
 
 # Load Data
 acs_outages_train <- 
   read_csv(paste0(here::here(), "/cleaned_data/acs_outages_train.csv"))
 acs_outages_test <-
   read_csv(paste0(here::here(), "/cleaned_data/acs_outages_test.csv"))
+acs_outages <- bind_rows(acs_outages_test, acs_outages_train)
 
 # Parameters
 lambdas <- 10^seq(3, -2, by = -.1)
@@ -126,7 +131,7 @@ reg_test_transform <-
 #   drop_na() 
 ```
 
-# Prediction on the test set
+# Part 1: Prediction on the test set
 ## Regression
 
 Our best performing linear regression model transformed two covariates, prop_latino and prop_less_than_hs. We selected this model because it had the lowest cross-validation error (4.065). While still having a low R^2 and relatively high CVerror, this model is able to pick up on small changes in the prop_latino and prop_less_than_hs covariates, as they have heavy-tailed distributions, without overfitting the training data. Therefore, we believed it would be more generalizable to the test data.
@@ -136,11 +141,12 @@ lr_transform <- lm(median_outage_duration_hr ~ ., data = reg_train_transform)
 transform_predict <- predict(lr_transform, reg_test_transform)
 RMSE(reg_test_transform$median_outage_duration_hr, transform_predict)
 ```
-The resulting RMSE is 3.40194, which is lower than the CVerror. 
+
+The resulting RMSE is 3.40194, which is lower than the CVerror. The fact that our test data fit our model better than our training data may have occurred simply due to chance. However, we did select the model because it has the best generalization error and it seems to have stood up to that test.
 
 ## Classification
 
-Our best performing classification model used principal components analysis (PCA) to reduce variables and to account for the colinearity of our covariates. Following PCA, we then used K-Nearest Neighbors (KNN) to determine if an outage affected more than the average amount of customers. Our focus was on reducing 0-1 loss and increasing sensitivity.
+Our best performing classification model used principal components analysis (PCA) to reduce variables and to account for the collinearity of our covariates. Following PCA, we then used K-Nearest Neighbors (KNN) to determine if an outage affected more than the average amount of customers. Our focus was on reducing 0-1 loss and increasing sensitivity.
 
 ```{r, echo=FALSE}
 # conduct PCA (to reduce data, especially collinearity)
@@ -321,7 +327,7 @@ confusion_matrix_comparison
 
 On the test set, it is apparent that mean 0-1 loss increased significantly and sensitivity dropped. Other metrics improved, like precision, while others worsened, like the Type II Error Rate. Given our focus on 0-1 loss and sensitivity, this model had an underwhelming performance. It would have been preferable to maintain a higher sensitivity rate with a lower 0-1 loss, but it is not clear how possible this is due to the low explanatory nature of the covariates.
 
-# Inference
+# Part 2: Inference
 ## Parts a) and b) below
 ```{r}
 # variable selection (non-PCA)
@@ -343,11 +349,7 @@ acs_outage_var_select <-
 
 ```
 
-* For your chosen model, look at which coefficients are significant in the regression output,
-  according to R. In words, describe what statistical significance means for these coefficients.
-  Do you believe the results? Why or why not?
-
-For this task, we decided to use a logistic model for classification. Due to the high number of covariates, we used stepwise regression (both directions) to select for variables. The stepwise selection highlighted proportions of white, Black/African American, American Indian and Alaska Native, and multi-racial people, as well as proportion owners, proportion of rural land, and the number of outages by square kilometer. By definition, each chosen covariate in the final model is significant at some level. In other words, these variables are only significant in so far are they are significant compared to the excluded covariates. Therefore, we do not put a lot of stock in the results - as it's quite likely that there are other covariates with much stronger explanatory power that were not included or available in original dataset. Additionally, stepwise selection does not consider all possible models and may be missing important context. We ultimately chose to use stepwise selection due to computational limitations, the low explanatory power of the data itself, and the presence of colinearity.
+For this task, we decided to use a logistic model for classification. Due to the high number of covariates, we used stepwise regression (both directions) to select for variables. The stepwise selection highlighted proportions of white, Black/African American, American Indian and Alaska Native, and multi-racial people, as well as proportion of home owners, proportion of rural land, and the number of outages per square kilometer (outage density). By definition, each chosen covariate in the final model is significant at some level. In other words, these variables are only significant in so far are they are significant compared to the excluded covariates. Therefore, we do not put a lot of stock in the results - as it's quite likely that there are other covariates with much stronger explanatory power that were not included or available in original dataset. Additionally, stepwise selection does not consider all possible models and may be missing important context. We ultimately chose to use stepwise selection due to computational limitations, the low explanatory power of the data itself, and the presence of collinearity. Based on these results, the proportion of Latino, Native Hawaiian or Pacific Islander, or some other race residents do not have a significant effect on outage extent. Nor does income status or educational attainment (none of the covariates related to these indicators are sufficient). This may mean that PG&E's service quality does not vary according to the socioeconomic makeup of a census tract, which is understandable as public utilities have a responsibility to provide their customers with reliable service. The proportion rural or urban land use is also significant, which is surprising as we might expect census tracts with more urban land use (meaning more homes, industrial buildings, etc.) and higher population density to have more intense outages.
 
 ```{r}
 # variable selection (non-PCA)
@@ -362,13 +364,7 @@ logit_mod_test <-
   MASS::stepAIC(trace = FALSE, direction = "both")
 summary(logit_mod_test)
 ```
-
-
-* Now fit your chosen model on the test data, and look at whether the same coefficients are
-  significant. Did anything change in doing so? If so, explain any differences that you found,
-  and reflect on why they might be there.
-  
-Running the logistic model and stepwise selection on the test data produced different results - proportions of white, Black/African American, and multi-racial people, as well as number of outages by square kilometer remain, but the test data suggests using proportion of Asian people, proportion of college-educated people, and proportion of high school-educated people. These differences are most likely due to the smaller sample size of the test set and the presence of bias. It is likely that in the census tracts available in the test set, it just so happens that education has a more significant relationship with outage size than in the population data.
+Running the logistic model and stepwise selection on the test data produced different results - proportions of white, Black/African American, and multi-racial people, as well as number of outages by square kilometer remain, but the test data suggests using proportion of Asian people, proportion of college-educated people, and proportion of high school-educated people. These differences are most likely due to the smaller sample size of the test set and the presence of bias. It is likely that in the census tracts available in the test set, it just so happens that education has a more significant relationship with outage extent than in the training data.
 
 ## Part c)
 ```{r}
@@ -417,12 +413,9 @@ coef_comparison_table %>%
   kable_styling(latex_options="scale_down")
 ```
 
-No coefficients lie outside the range of the 95% confidence interval after running the reduced logistic model through the bootstrap. Some of the intervals of relatively large, however, which is of concern (i.e, for proportion multi-racial or proportion American Indian and Alaska Native). Additionally, the fact that proportion of owners has a confidence interval that changes signs is worth noting.
+The results are the same as our standard regression output. No coefficients lie outside the range of the 95% confidence interval after running the reduced logistic model through the bootstrap. Some of the intervals of relatively large, however, which is of concern (i.e, for proportion multi-racial or proportion American Indian and Alaska Native). Additionally, the fact that proportion of homeowners has a confidence interval that changes signs is worth noting, and this is the only coefficient that was not significant below the 0.5 level whcih is consistent with our previous result. 
 
-# Inference Discussion
-• If your chosen model does not include all covariates you had available, compare the significant coefficients in your chosen model to the significant coefficients in a model that includes
-all covariates. Did the significant coefficients change? If so, explain the differences.
-
+## Inference Discussion
 ```{r}
 # stepwise logistic model (train)
 summary(logit_mod_train)
@@ -436,67 +429,52 @@ logit_base_train <-
   )
 summary(logit_base_train)
 ```
-There is some change in significance of coefficients between the chosen model (which does not have all variables) and the full logistic model. For instance, the proportion of owners is not significant at all in the full model full. Additionally, the proportion of Asian people is highly significant in the full model, but is not present at all in the reduce model. Finally, the degree of significance between covariates in both models differs.
+There is some change in significance of coefficients between the chosen model (which does not have all variables) and the full logistic model. For instance, the proportion of owners is not significant at all in the model that includes all covariates. Additionally, the proportion of Asian residents is highly significant in the full model, but is not present at all in the reduce model. In the model with all covariates, the proportion of rural land use is also significant and associated with a larger outages extent. Finally, the degree of significance between covariates in both models differs.  
 
-* Do you believe collinearity is impacting your results? Be specific.
+```{r}
+covariate_corr <-
+  acs_outages %>%
+  select(all_of(continuous_vars), all_of(outcome_vars)) %>%
+  # drop prop owner
+  select(-prop_owner) %>%
+  select(where(~sd(., na.rm = TRUE) > 0)) %>%
+  correlate() %>%
+  stretch() %>%
+  arrange(r) %>%
+  filter(abs(r) > .5)
 
-Yes, collinearity is almost certainly impacting the results. Even in the reduced model, there are multiple covariates that relate to proportions by race - which are certainly collinear variables. The most important impact of this is likely born out in the stepwise selection - the algorithm is choosing artificially inflated covariates to be part of the reduced model.
+# reformat in formula form
+interaction_vars <-
+  covariate_corr %>%
+  mutate(lead_y = lead(y)) %>%
+  filter(x != lead_y) %>%
+  select(x, y) %>%
+  unite(col = "interact", sep = ":") %>%
+  unlist() %>%
+  paste(collapse = " + ")
+covariate_corr %>% 
+  group_by(r) %>% 
+  slice_head()
+```
+Collinearity is almost certainly impacting the results. When looking at the table above, we can see that all covariate pairs have an absolute correlation coefficient above 0.5. Many of these demographic variables (race/ethnicity, income level, education attainment) are related to one another. This is a fault with our project design and should have been considered as we built our dataset. The regression automatically attempts to account for this by removing one proportion from each demographic category.  Even in the reduced model, there are multiple covariates that relate to proportions by race - which are certainly collinear variables. The most important impact of this is likely born out in the stepwise selection - the algorithm is choosing artificially inflated covariates to be part of the reduced model. 
 
-* Comment on post-selection inference: What aspects of your model-building and inference
-process that might bias your determination of which coefficients are significant?
+Using the stepwise approach during the model-building process likely biased the initial model in its determination of which covariates were most influential. Again, the issue of collinearity plagues our dataset, and the fact that so many of the final variables in our reduced model with racial demographic proportions highlights this fact. This reduction could have excluded important explanatory variables. In the future, we should consider external validation with new data and specifically integrating data from other California electric utilites and census tracts to strengthen the case for any particular associations. 
 
-Using the stepwise approach could have biased the initial model in its determination of which covariates were most influential. Again, the issue of collinearity plagues our dataset, and the fact that so many of the final variables in our reduced model with racial demographic proportions highlights this fact. This reduction could have excluded important explanatory variables.
+We are not willing to determine any causal relationships or even associative relationships found in our inference, regardless of any significance determined by the regression for specific covariates. This is due to the persistant issues of collinearity and data completeness that we have discussed. 
 
-Not really sure what else to add here.
+# Part 3: Discussion
 
-We should consider external validation with new data and specifically integrating data from other California electric utilites and census tracts to strengthen the case for a particular relationship. 
+While PG&E and other electric utilities monitor their outages and service quality through numerous quantitative metrics, including spatial distribution, there is little emphasis on the communities that are affected by these disruptions in service. Of course, power outages impact residential, commerical, and industrial customers in different ways. However, we must also consider the equity implications of who is being impacted by irregular electricity service. Our models aimed to bring disparities in service quality to light by looking at the relationship between where outages are located and who they impact. Further, they try to help us understand if the demographic make up of a census tract makes a certain area more vulnerable to worse service quality or higher outage durations. Practically, this concept could be used in two spheres. The first is disaster relief and preparation. In this case, the model would primarily be used for inference to determine what characteristics of census tracts may make an area more vulnerable, and thus highlight areas with similar makeups that could benefit from future investment in energy infrastructure or measures to prepare against large outages. When used for inference, the model could guide decisions in policy making related to resource allocation. The second sphere, in which the model would primarily be used for prediction, similarly would aim to highlight vulnerability but instead by predicting how long outages in a given area may be or how many residents could be impacted. This information would inform decision making for residents who may take action to prepare themselves for the event of particularly long outages. It is important to discuss here, however, that demographic data is likely not the best way to determine these insights. PG&E and other electric utilites making decisions about where and for how long to cut power must depend on all kinds of environmental and climate data, such as the presence of wildfires, temperature, and the quality of their transmission infrastructure, and thus we need to integrate these factors into our models in order to ensure more robust prediction and inference to better inform decision making.
 
+Our models were fitted on power outage data from the last several months, but PG&E and other utilites are constantly collecting new data on their service regularity and variability. Patterns in the frequency and duration of power outages will likely change over time due to the prevalence of wildfires, improvements in transmission and distribution infrastructure, increased ability to predict wildfire behavior and movement, as well as changes in temperature and precipitation in California (which influence wildfire initiation). While the United States Census Bureau performs the census every ten years, the American Community Survey releases new data yearly. Our demographic data is thus relatively up to date and provides a current snapshot of census tract demographics. If we update our data every year with new demographic data, then we would expect better results from our models. However, this will impact our ability to use our models for inference because the covariates will be replaced each year. Therefore, our models need to be built to consider anticipated changes in both demographic and outage data while also considering historical data for inference. If possible, it would be best to give more weight to recent outage data when refitting because the newest data will best reflect contemporary trends.  
 
+We would want to make sure anyone working with our data or models know the following: When preparing our data, we calculated proportions for all our covariates and thus had to remove one covariate from each category (race/ethnicity, income level, education attainment, etc.) to avoid issues with collinearity. We designed our data to summarize statistics and outages at the scale of each census tract, which required making assumptions about the homogeneity of each tract. We believed this was reasonable, as census tracts are relatively small geographic areas. Correlations between covariates and their distributions were also considered when transforming data for our prediction model. For inference, we use stepwise selection to determine significant variables, which biases our selection of covariates and underestimates our p-values. We recommend validating our models on new data to mitigate this.
 
-Are confidence intervals wider or narrower on test set? THey should be wider because we are using less data. @Lilla - we didn't produce confidence intervals on the test set.
-
-
-# Discussion
-
-a) How would you expect your models to be used practically? Do you think they would primarily
-be used for prediction, for inference, or for both? What decisions do you think your
-models would guide, and what pitfalls do you see in using your models to make these decisions?
-
-While PG&E and other electric utilities monitor their outages and service quality through numerous quantitative metrics, including spatial distribution, there is little emphasis on the communities that are affected by these disruptions in service. Of course, power outages impact residential, commerical, and industrial customers in different ways. However, we must also consider the equity implications of who is being impacted by irregular electricity service. Our models aimed to bring disparities in service quality to light by looking at the relationship between where outages are located and who they impact. Further, they try to help us understand if the demographic make up of a census tract makes a certain area more vulnerable to worse service quality or higher outage durations. Practically, this concept could be used in two spheres. The first is disaster relief and preparation. Suppose our model showed that certain covariates 
-
-PG&E and other electric utilites making decisions about where and for how long to cut power
-
-b) How well would your models hold up over time (i.e., how often do you think they should be
-refitted)? Why?
-
-Our models were fitted on power outage data from the last several months, but PG&E and other utilites are constantly collecting new data on their service regularity and variability. Patterns in the frequency and duration of power outages will likely change over time due to the prevalence of wildfires, improvements in transmission and distribution infrastructure, and increased ability to predict wildfire behavior and movement. While the United States Census Bureau performs the census every ten years, the American Community Survey releases new data yearly. Our demographic data is thus relatively up to date and provides a current snapshot of census tract demographics. Therefore, our model will need to be refitted regularly with the newest data on both outages and demographic data. 
-
-** how to integrate changes in land use, satellite data 
-
-c) Are there choices you made in your data analysis, that you would want to make sure any
-one (e.g., a manager, a client, etc.) that uses your models is aware of? Examples here might
-include approaches to data cleaning; data transformations that you chose; vulnerability to
-overfitting, multiple hypothesis testing, or post-selection inference; etc.
-
-- transformed variables with heavy tailed distributions. Because we used proportions for all our variables, had to remove one of each of them to avoid collinearity. 
-
-d) If you could, how would you change the data collection process? In particular, are there
-reasonable covariates you would like to collect, that were not present in the data?
-
-PG&E only provides a single coordinate for each outage. Therefore there is not reliable information concerning the extent of the entire affected outage area. We georeferenced the outage coordinate to determine which census tract it corresponded to, though this only allowed us to infer what communities a specific power outage affected.
-
-PG&E does not provide a data dictionary, so we must infer what the different variables mean based on their names. 
-
-Because we only used PG&E outage data, our model was design to elucidate utility service quality in primarily Northern California census tracts. Our entire dataset was only 2722 rows, which is relatively small and may have impacted our ability to find meaningful insights. There are other major electric utilites in California, such as Southern California Edison and San Diego Gas and Electric, that also serve geographies severely impacted by wildfires and with socioeconomic disparities. By building a dataset that included outage data on all 8,057 California census tracts, we would have a more complete picture of electric utility service in California. This would also allow us to understand differences in service between utilities.
-
-e) If you were to attack the same dataset again, what would you do differently?
+There are many things we should change regarding data collection. PG&E only provides a single coordinate for each outage. Therefore there is not reliable information concerning the extent of the entire affected outage area. We georeferenced the outage coordinate to determine which census tract it corresponded to, though this only allowed us to infer what communities a specific power outage affected. PG&E also does not provide a data dictionary, so we must infer what the different variables mean based on their names. Because we only used PG&E outage data, our model was design to elucidate utility service quality in primarily Northern California census tracts. Our entire dataset was only 2722 rows, which is relatively small and may have impacted our ability to find meaningful insights. There are other major electric utilites in California, such as Southern California Edison and San Diego Gas and Electric, that also serve geographies severely impacted by wildfires and with socioeconomic disparities. By building a dataset that included outage data on all 8,057 California census tracts, we would have a more complete picture of electric utility service in California. This would also allow us to understand differences in service between utilities.
 
 When embarking on this topic, we believed that demographic characteristics of census tracts would have some predictive power to understand why PG&E's power outages were distributed the way they are. Historically, the quality of public services differ vastly based on communities' socioeconomic status, race, and wealth. After completing our analysis, there are likely many other factors at play in determining PG&E's ability to return power to its customers. Environmental and geographic factors, as well as PG&E's own behind-the-scenes decision making about where to cut power, will surely influence the prevalence and duration of power outages. Environmental and geographic factors that could have benefitted our model include the size, proximity, and presence of wildfire; quality of transmission and distribution infrastructure (including powerlines and voltage boxes); more detailed land cover data (vegetation, temperative, albedo, forested area); and building infrastructure data (industrial and commercial offtakers use more electricity than residential customers). Perhaps it would have been wiser to try to model how PG&E itself makes choices about where and how long to cut power for. 
 
-On one hand, it is a good thing that PG&E's service does not seemingly discriminate against certain groups based on the proportion of that demographic indicator present in a census tract. 
-
-External validation using subsequent studies.
-
+When looking at our results, on one hand, it is a good thing that PG&E's service does not seemingly discriminate against certain groups based on the proportion of that demographic indicator present in a census tract. However, we believe that our research questions and the potential applications of this model are important things to think about and prepare for as wildfires and other natural disasters become more prevalent.
 
 
 
